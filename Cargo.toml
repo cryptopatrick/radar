@@ -1,0 +1,12 @@
+[package]
+name = "radar"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Rust library for working with radar data formats."
+authors = ["CryptoPatrick <cryptopatrick@gmail.com>"]
+repository = "https://github.com/cryptopatrick/radar"
+readme = "README.md"
+keywords = ["radar", "parser", "data-formats"]
+
+[dependencies]
