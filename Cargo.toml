@@ -1,13 +1,16 @@
 [package]
 name = "radar"
 version = "0.1.1"
-categories = ["parser-implementations", "science"]
-edition = "2021"
-license = "MIT"
-description = "Rust library for working with radar data formats."
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-only"
+description = "Realistic radar and sensor simulation for games and simulations: scanning, probabilistic detection, measurement noise, tracking and electronic warfare."
 authors = ["CryptoPatrick <cryptopatrick@gmail.com>"]
 repository = "https://github.com/cryptopatrick/radar"
+documentation = "https://docs.rs/radar"
 readme = "README.md"
-keywords = ["radar", "parser", "data-formats"]
+keywords = ["radar", "sensor", "simulation", "gamedev", "tracking"]
+categories = ["simulation", "game-development", "science"]
+include = ["/src", "/examples", "/tests", "/README.md", "/LICENSE", "/COPYING"]
 
 [dependencies]

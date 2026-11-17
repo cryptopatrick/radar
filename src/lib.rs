@@ -1,1 +1,1 @@
-//! Rust library for working with radar data formats.
+//! Realistic radar and sensor simulation for games and simulations.
