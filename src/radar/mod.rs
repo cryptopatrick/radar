@@ -15,4 +15,6 @@ pub use config::{
 };
 pub use detection::{DetectionContext, DetectionModel, DetectionResult};
 pub use measurement::{MeasurementConfig, MeasurementSigma};
-pub use scan::{ScanConfig, ScanPattern, ScanState, Sweep};
+pub use scan::{
+    ScanConfig, ScanPattern, ScanState, Sweep, half_extent, illumination, max_sweep_per_update,
+};

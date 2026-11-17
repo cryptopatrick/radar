@@ -7,7 +7,7 @@ use crate::radar::calibration::Calibration;
 use crate::radar::calibration::JammingReference;
 use crate::radar::detection::DetectionModel;
 use crate::radar::measurement::{MeasurementConfig, MeasurementSigma};
-use crate::radar::scan::ScanConfig;
+use crate::radar::scan::{ScanConfig, max_sweep_per_update};
 use crate::time::SimDuration;
 #[cfg(feature = "tracking")]
 use crate::tracking::{TrackManagementConfig, TrackerConfig};
@@ -276,6 +276,11 @@ impl RadarConfig {
             !self.update_period.is_zero(),
             "update_period",
             "must be > 0",
+        )?;
+        check(
+            max_sweep_per_update(&self.scan, self.update_period.as_secs_f64()) <= TAU,
+            "scan",
+            "sweep per update must be <= 2π",
         )?;
         let l = &self.limits;
         check(
