@@ -7,6 +7,7 @@ use super::vector::Vector3;
 /// Body frame: forward = +y, right = +x, up = +z. World frame: x = east,
 /// y = north, z = up.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Rotation3 {
     w: f64,
     x: f64,

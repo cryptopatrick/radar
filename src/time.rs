@@ -5,10 +5,12 @@ use std::ops::{Add, Sub};
 
 /// An instant in simulation time, in nanoseconds since the start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SimTime(u64);
 
 /// A span of simulation time, in nanoseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SimDuration(u64);
 
 impl SimTime {

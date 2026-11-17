@@ -5,6 +5,7 @@ use super::vector::Vector3;
 
 /// A position and orientation (body-to-world rotation).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Pose3 {
     /// Position in the parent frame.
     pub position: Vector3,

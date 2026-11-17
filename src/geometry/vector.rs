@@ -4,6 +4,7 @@ use std::ops::{Add, Mul, Neg, Sub};
 
 /// A 3D vector (x = east, y = north, z = up in the world frame).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vector3 {
     /// X component.
     pub x: f64,
@@ -102,6 +103,7 @@ impl Mul<f64> for Vector3 {
 
 /// A 2D vector (x = east, y = north).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vector2 {
     /// X component.
     pub x: f64,
