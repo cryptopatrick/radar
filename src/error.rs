@@ -1,6 +1,7 @@
 //! Error type for the crate.
 
 use crate::ids::SensorId;
+use crate::time::SimTime;
 
 /// Errors returned by validation and simulation operations.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -25,6 +26,14 @@ pub enum RadarError {
     /// Entropy could not be obtained from the operating system.
     #[error("entropy unavailable: {0}")]
     EntropyUnavailable(String),
+    /// Time was advanced to an instant before the current one.
+    #[error("time went backwards: {previous:?} -> {given:?}")]
+    TimeWentBackwards {
+        /// The current simulation time.
+        previous: SimTime,
+        /// The earlier time that was supplied.
+        given: SimTime,
+    },
     /// A model reported an error.
     #[error("model error: {0}")]
     Model(String),
