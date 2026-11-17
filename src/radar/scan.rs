@@ -290,6 +290,8 @@ pub(crate) fn advance(cfg: &mut ScanConfig, state: &mut ScanState, dt_secs: f64)
                 };
             };
             let cap = (*max_slew_rate * dt_secs).abs();
+            // Unvalidated config: a NaN bound would make clamp panic.
+            let cap = if cap.is_nan() { 0.0 } else { cap };
             // wrap_pi returns (-π, π], so an exact 180° tie goes positive.
             let delta = wrap_pi(az - start).clamp(-cap, cap);
             state.elevation += (el - state.elevation).clamp(-cap, cap);
@@ -323,6 +325,10 @@ fn full_turn(state: &mut ScanState, delta: f64) -> bool {
 /// direction reverses for the next update. Returns `(delta, reversed)`.
 fn sector_step(state: &mut ScanState, centre: f64, width: f64, travel: f64) -> (f64, bool) {
     let half = width.abs() / 2.0;
+    if !half.is_finite() {
+        // Unvalidated config: hold the beam rather than clamp to a NaN bound.
+        return (0.0, false);
+    }
     let pos = wrap_pi(state.azimuth - centre).clamp(-half, half);
     let dir = if state.direction < 0.0 { -1.0 } else { 1.0 };
     let room = if dir > 0.0 { half - pos } else { pos + half };
@@ -657,5 +663,106 @@ mod tests {
             1.0
         );
         assert!(RadarConfig::builder().build().is_ok());
+    }
+
+    fn scan_field(scan: ScanConfig) -> bool {
+        matches!(
+            RadarConfig::builder().scan(scan).build(),
+            Err(crate::error::RadarError::InvalidConfig { field: "scan", .. })
+        )
+    }
+
+    #[test]
+    fn validation_rejects_nan_sector_width() {
+        assert!(scan_field(ScanConfig::Sector {
+            centre: 0.0,
+            width: f64::NAN,
+            rate: 1.0,
+            elevation: 0.0,
+        }));
+    }
+
+    #[test]
+    fn validation_rejects_wide_sector() {
+        assert!(scan_field(ScanConfig::Sector {
+            centre: 0.0,
+            width: 7.0,
+            rate: 1.0,
+            elevation: 0.0,
+        }));
+    }
+
+    #[test]
+    fn validation_rejects_zero_raster_rows() {
+        assert!(scan_field(ScanConfig::Raster {
+            azimuth_centre: 0.0,
+            azimuth_span: 1.0,
+            elevation_low: 0.0,
+            elevation_high: 0.1,
+            rows: 0,
+            rate: 1.0,
+        }));
+    }
+
+    #[test]
+    fn validation_rejects_empty_volume_bars() {
+        assert!(scan_field(ScanConfig::Volume {
+            elevation_bars: vec![],
+            rate: 1.0,
+        }));
+    }
+
+    #[test]
+    fn validation_rejects_other_bad_scan_values() {
+        assert!(scan_field(ScanConfig::Circular {
+            rate: -1.0,
+            elevation: 0.0,
+        }));
+        assert!(scan_field(ScanConfig::Fixed {
+            azimuth: f64::INFINITY,
+            elevation: 0.0,
+        }));
+        assert!(scan_field(ScanConfig::Circular {
+            rate: 1.0,
+            elevation: 2.0,
+        }));
+        assert!(scan_field(ScanConfig::Raster {
+            azimuth_centre: 0.0,
+            azimuth_span: 1.0,
+            elevation_low: 0.2,
+            elevation_high: 0.1,
+            rows: 2,
+            rate: 1.0,
+        }));
+        assert!(scan_field(ScanConfig::Volume {
+            elevation_bars: vec![0.1, f64::NAN],
+            rate: 1.0,
+        }));
+        assert!(scan_field(ScanConfig::Steered {
+            max_slew_rate: f64::NAN,
+        }));
+        assert!(RadarConfig::surveillance_3d().is_ok());
+    }
+
+    #[test]
+    fn sector_step_nan_width_does_not_panic() {
+        let mut cfg = ScanConfig::Sector {
+            centre: 0.0,
+            width: f64::NAN,
+            rate: 1.0,
+            elevation: 0.0,
+        };
+        let mut state = ScanState::default();
+        let s = advance(&mut cfg, &mut state, 1.0);
+        assert_eq!(s.delta_azimuth, 0.0);
+        assert!(state.azimuth.is_finite());
+        // A NaN slew rate is also safe.
+        let mut cfg = ScanConfig::Steered {
+            max_slew_rate: f64::NAN,
+        };
+        state.command = Some((1.0, 0.5));
+        let s = advance(&mut cfg, &mut state, 1.0);
+        assert_eq!(s.delta_azimuth, 0.0);
+        assert!(state.elevation.is_finite());
     }
 }

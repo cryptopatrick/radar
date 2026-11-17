@@ -15,7 +15,7 @@ use crate::units::deg;
 #[cfg(feature = "ew")]
 use crate::world::Band;
 use crate::world::Swerling;
-use std::f64::consts::{PI, TAU};
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 /// Whether the radar measures elevation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -176,6 +176,56 @@ fn non_negative(x: f64) -> bool {
     x.is_finite() && x >= 0.0
 }
 
+/// Checks a built-in scan config (Custom is not validated): finite angles
+/// and rates, rates `>= 0`, sector/raster widths in `[0, 2π]`, elevations in
+/// `[−π/2, π/2]`, raster `rows >= 1` with `low <= high`, non-empty bars.
+fn check_scan(scan: &ScanConfig) -> Result<(), RadarError> {
+    let el = |e: f64| e.is_finite() && (-FRAC_PI_2..=FRAC_PI_2).contains(&e);
+    let width = |w: f64| (0.0..=TAU).contains(&w);
+    let ok = match scan {
+        ScanConfig::Fixed { azimuth, elevation } => azimuth.is_finite() && el(*elevation),
+        ScanConfig::Circular { rate, elevation } => non_negative(*rate) && el(*elevation),
+        ScanConfig::Sector {
+            centre,
+            width: w,
+            rate,
+            elevation,
+        } => centre.is_finite() && width(*w) && non_negative(*rate) && el(*elevation),
+        ScanConfig::Raster {
+            azimuth_centre,
+            azimuth_span,
+            elevation_low,
+            elevation_high,
+            rows,
+            rate,
+        } => {
+            azimuth_centre.is_finite()
+                && width(*azimuth_span)
+                && el(*elevation_low)
+                && el(*elevation_high)
+                && elevation_low <= elevation_high
+                && *rows >= 1
+                && non_negative(*rate)
+        }
+        ScanConfig::Volume {
+            elevation_bars,
+            rate,
+        } => {
+            !elevation_bars.is_empty()
+                && elevation_bars.iter().all(|e| el(*e))
+                && non_negative(*rate)
+        }
+        ScanConfig::Steered { max_slew_rate } => non_negative(*max_slew_rate),
+        ScanConfig::Custom(_) => true,
+    };
+    check(
+        ok,
+        "scan",
+        "angles and rates must be finite, rates >= 0, widths in [0, 2π], \
+         elevations in [-π/2, π/2], raster rows >= 1 with low <= high, bars non-empty",
+    )
+}
+
 fn check_sigma(s: &MeasurementSigma, field: &'static str) -> Result<(), RadarError> {
     let ok = [s.range, s.azimuth, s.elevation, s.radial_velocity]
         .into_iter()
@@ -277,6 +327,7 @@ impl RadarConfig {
             "update_period",
             "must be > 0",
         )?;
+        check_scan(&self.scan)?;
         check(
             max_sweep_per_update(&self.scan, self.update_period.as_secs_f64()) <= TAU,
             "scan",
