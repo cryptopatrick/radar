@@ -225,6 +225,9 @@ fn finite_pose(pose: &Pose3, velocity: &Vector3, who: &str) -> Result<(), RadarE
     if !pose.position.is_finite() {
         return bad(who, "position must be finite");
     }
+    if !pose.rotation.is_valid() {
+        return bad(who, "rotation must be finite and unit-norm");
+    }
     if !velocity.is_finite() {
         return bad(who, "velocity must be finite");
     }
@@ -292,13 +295,39 @@ mod tests {
     fn nan_rejected() {
         let mut t = target(1);
         t.pose.position = Vector3::new(f64::NAN, 0.0, 0.0);
-        assert!(matches!(
-            snap(vec![t]).validate(),
-            Err(RadarError::InvalidWorld(_))
-        ));
+        match snap(vec![t]).validate() {
+            Err(RadarError::InvalidWorld(m)) => assert!(m.contains("TargetId(1)"), "{m}"),
+            other => panic!("unexpected {other:?}"),
+        }
         let mut t = target(2);
         t.velocity = Vector3::new(0.0, f64::INFINITY, 0.0);
         assert!(snap(vec![t]).validate().is_err());
+    }
+
+    #[test]
+    fn invalid_rotation_rejected() {
+        use crate::geometry::Rotation3;
+        for bad in [
+            Rotation3::from_raw_unchecked(f64::NAN, 0.0, 0.0, 0.0),
+            Rotation3::from_raw_unchecked(2.0, 0.0, 0.0, 0.0),
+        ] {
+            let mut t = target(7);
+            t.pose.rotation = bad;
+            match snap(vec![t]).validate() {
+                Err(RadarError::InvalidWorld(m)) => assert!(m.contains("TargetId(7)"), "{m}"),
+                other => panic!("unexpected {other:?}"),
+            }
+            let mut w = WorldSnapshot::new(SimTime::ZERO);
+            w.platforms.push(PlatformState {
+                id: PlatformId(3),
+                pose: Pose3::new(Vector3::ZERO, bad),
+                velocity: Vector3::ZERO,
+            });
+            match w.validate() {
+                Err(RadarError::InvalidWorld(m)) => assert!(m.contains("PlatformId(3)"), "{m}"),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
     }
 
     #[test]

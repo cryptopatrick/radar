@@ -49,6 +49,21 @@ impl Rotation3 {
         Self::from_axis_angle(Vector3::new(0.0, 0.0, 1.0), -h)
     }
 
+    /// True if all components are finite and the quaternion has unit norm.
+    pub(crate) fn is_valid(&self) -> bool {
+        let n2 = self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z;
+        [self.w, self.x, self.y, self.z]
+            .iter()
+            .all(|c| c.is_finite())
+            && (n2.sqrt() - 1.0).abs() < 1e-6
+    }
+
+    /// Builds an unchecked rotation from raw components (tests only).
+    #[cfg(test)]
+    pub(crate) fn from_raw_unchecked(w: f64, x: f64, y: f64, z: f64) -> Rotation3 {
+        Rotation3 { w, x, y, z }
+    }
+
     /// Rotates a vector.
     pub fn rotate(self, v: Vector3) -> Vector3 {
         let q = Vector3::new(self.x, self.y, self.z);
