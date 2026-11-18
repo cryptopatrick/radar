@@ -1,11 +1,12 @@
 //! Target tracking (feature `tracking`).
 
 mod filter;
+mod manager;
 mod matrix;
 
-#[allow(unused_imports)] // used by track management (T12)
-pub(crate) use filter::chi2_gate;
 pub use filter::{AlphaBeta, Covariance6, KalmanCv, TrackState, Tracker};
+pub use manager::{Track, TrackStatus};
+pub(crate) use manager::{TrackManager, with_tracker};
 
 /// Which tracking filter a radar runs.
 #[derive(Debug)]

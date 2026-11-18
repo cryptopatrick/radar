@@ -9,6 +9,8 @@ use crate::radar::Measurement;
 use crate::random::RandomSource;
 use crate::time::{SimDuration, SimTime};
 use crate::world::{PlatformState, WorldSnapshot};
+#[cfg(feature = "tracking")]
+use crate::{ids::TrackId, tracking::Track};
 
 /// Everything a sensor sees during one update.
 pub struct SensorContext<'a> {
@@ -46,6 +48,9 @@ pub trait SensorModel: Send + std::fmt::Debug {
 /// Something a sensor reports.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+// `TrackUpdated` carries the full 6×6 covariance by value, as specified;
+// observations are moved in bulk through reusable buffers.
+#[cfg_attr(feature = "tracking", allow(clippy::large_enum_variant))]
 pub enum Observation {
     /// A detection (real or false alarm).
     Measurement(Measurement),
@@ -54,6 +59,19 @@ pub enum Observation {
         /// The reporting sensor.
         sensor: SensorId,
         /// Time of the update in which the scan completed.
+        time: SimTime,
+    },
+    /// A track was created, updated or missed (feature `tracking`).
+    #[cfg(feature = "tracking")]
+    TrackUpdated(Track),
+    /// A track was deleted (feature `tracking`).
+    #[cfg(feature = "tracking")]
+    TrackDeleted {
+        /// The reporting sensor.
+        sensor: SensorId,
+        /// The deleted track.
+        id: TrackId,
+        /// Time of the update that deleted it.
         time: SimTime,
     },
 }

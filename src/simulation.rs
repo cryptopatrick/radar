@@ -11,6 +11,8 @@ use crate::radar::sensor::RadarSensor;
 use crate::random::{ChaChaStream, RandomSource, Seed, StreamId};
 use crate::sensor::{Observation, SensorContext, SensorModel};
 use crate::time::{SimDuration, SimTime};
+#[cfg(feature = "tracking")]
+use crate::tracking::Track;
 use crate::world::{PlatformState, WorldSnapshot};
 use std::collections::BTreeMap;
 use std::f64::consts::FRAC_PI_2;
@@ -159,7 +161,7 @@ impl Simulation {
     ) -> Result<(), RadarError> {
         cfg.validate()?;
         let period = cfg.update_period;
-        let kind = SensorKind::Radar(Box::new(RadarSensor::new(cfg)));
+        let kind = SensorKind::Radar(Box::new(RadarSensor::new(id, cfg)));
         self.insert(id, platform, mount, period, kind)
     }
 
@@ -420,11 +422,27 @@ impl Simulation {
         })
     }
 
+    /// Snapshot copies of a sensor's live tracks in id order (deleted
+    /// tracks are excluded). Empty for a radar without a tracker or a
+    /// custom sensor.
+    ///
+    /// # Errors
+    /// `UnknownSensor` if `id` does not exist.
+    #[cfg(feature = "tracking")]
+    pub fn tracks(&self, id: SensorId) -> Result<Vec<Track>, RadarError> {
+        let e = self.sensors.get(&id).ok_or(RadarError::UnknownSensor(id))?;
+        Ok(match &e.kind {
+            SensorKind::Radar(r) => r.tracks(),
+            SensorKind::Custom(_) => Vec::new(),
+        })
+    }
+
     /// Restores the state right after construction and sensor
     /// registration: time 0, the world an empty snapshot at time 0, each
     /// sensor due one period later, radar scans at their initial state,
-    /// queues cleared and random streams rebuilt from the seed. Sensors,
-    /// their configs and enabled flags are kept.
+    /// queues cleared, tracks dropped (numbering restarts at 1) and random
+    /// streams rebuilt from the seed. Sensors, their configs and enabled
+    /// flags are kept.
     ///
     /// The host must feed the world again with
     /// [`update_world`](Self::update_world); replaying the same calls then

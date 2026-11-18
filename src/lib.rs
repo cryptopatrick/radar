@@ -32,7 +32,8 @@ pub mod prelude {
     pub use crate::time::{SimDuration, SimTime};
     #[cfg(feature = "tracking")]
     pub use crate::tracking::{
-        AlphaBeta, Covariance6, KalmanCv, TrackState, Tracker, TrackerConfig,
+        AlphaBeta, Covariance6, KalmanCv, Track, TrackManagementConfig, TrackState, TrackStatus,
+        Tracker, TrackerConfig,
     };
     pub use crate::units::WorldScale;
     pub use crate::world::{PlatformState, RadarSignature, Swerling, TargetState, WorldSnapshot};

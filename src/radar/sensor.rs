@@ -2,7 +2,7 @@
 
 use crate::error::RadarError;
 use crate::geometry::{Rotation3, Vector3, azimuth_of, direction, elevation_of};
-use crate::ids::TransponderCode;
+use crate::ids::{SensorId, TransponderCode};
 use crate::radar::config::{DetectionConfig, Dimension, RadarConfig, ScanFrame};
 use crate::radar::detection::{
     DetectionContext, DetectionModel, DetectionResult, RadiusDetector, RangeEquationDetector,
@@ -13,6 +13,8 @@ use crate::radar::scan::{ScanState, Sweep, advance, half_extent, illumination, i
 use crate::random::RandomSource;
 use crate::random::sample::{bernoulli, uniform01};
 use crate::sensor::{Observation, SensorContext, SensorModel};
+#[cfg(feature = "tracking")]
+use crate::tracking::{Track, TrackManager, TrackerConfig, with_tracker};
 use crate::units::linear_to_db;
 use std::f64::consts::FRAC_PI_2;
 
@@ -25,6 +27,15 @@ const FALSE_ALARM_DOPPLER_SPAN: f64 = 300.0;
 struct Frame {
     position: Vector3,
     rotation: Rotation3,
+}
+
+impl Frame {
+    /// Range and scan-frame azimuth and elevation of a world point.
+    fn look_at(&self, p: Vector3) -> (f64, f64, f64) {
+        let rel = p - self.position;
+        let local = self.rotation.inverse().rotate(rel);
+        (rel.length(), azimuth_of(local), elevation_of(local))
+    }
 }
 
 /// A real detection awaiting identification.
@@ -42,22 +53,45 @@ pub(crate) struct RadarSensor {
     state: ScanState,
     /// Range-equation constant `K` (unused by other detection configs).
     snr_constant: f64,
+    /// Track manager, unless the tracker is [`TrackerConfig::None`].
+    #[cfg(feature = "tracking")]
+    tracks: Option<TrackManager>,
 }
 
 impl RadarSensor {
-    /// Creates the sensor with its scan at the initial state. The config is
-    /// assumed valid.
-    pub(crate) fn new(cfg: RadarConfig) -> Self {
+    /// Creates sensor `id` with its scan at the initial state and no
+    /// tracks. The config is assumed valid.
+    #[cfg_attr(not(feature = "tracking"), allow(unused_variables))]
+    pub(crate) fn new(id: SensorId, cfg: RadarConfig) -> Self {
         let snr_constant = match &cfg.detection {
             DetectionConfig::RangeEquation(c) => c.calibration.snr_constant(),
             _ => 0.0,
         };
         let state = initial_state(&cfg.scan);
+        #[cfg(feature = "tracking")]
+        let tracks = (!matches!(cfg.tracker, TrackerConfig::None)).then(|| {
+            TrackManager::new(
+                &cfg.track_management,
+                cfg.dimension,
+                id,
+                cfg.limits.instrumented_range,
+            )
+        });
         Self {
             cfg,
             state,
             snr_constant,
+            #[cfg(feature = "tracking")]
+            tracks,
         }
+    }
+
+    /// Snapshots of the live tracks (empty without a tracker).
+    #[cfg(feature = "tracking")]
+    pub(crate) fn tracks(&self) -> Vec<Track> {
+        self.tracks
+            .as_ref()
+            .map_or_else(Vec::new, TrackManager::tracks)
     }
 
     /// The radar's configuration.
@@ -75,9 +109,13 @@ impl RadarSensor {
         &mut self.state
     }
 
-    /// Returns the scan to its initial state.
+    /// Returns the scan to its initial state and drops every track.
     pub(crate) fn reset(&mut self) {
         self.state = initial_state(&self.cfg.scan);
+        #[cfg(feature = "tracking")]
+        if let Some(t) = &mut self.tracks {
+            t.reset();
+        }
     }
 
     /// Runs the configured detector: Radius → [`RadiusDetector`],
@@ -163,19 +201,16 @@ impl RadarSensor {
     ) {
         let world = ctx.world;
         let limits = self.cfg.limits;
-        let inverse = frame.rotation.inverse();
         for target in &world.targets {
             if target.platform == Some(ctx.platform.id) {
                 continue;
             }
             let p_target = target.position_at(world.time, ctx.time);
             let rel = p_target - frame.position;
-            let range = rel.length();
+            let (range, az_s, el_s) = frame.look_at(p_target);
             if !(range >= limits.min_range && range <= limits.instrumented_range) {
                 continue;
             }
-            let local = inverse.rotate(rel);
-            let (az_s, el_s) = (azimuth_of(local), elevation_of(local));
             let Some((off_az, off_el)) = illumination(
                 sweep,
                 az_s,
@@ -302,14 +337,27 @@ impl SensorModel for RadarSensor {
         self.false_alarms(ctx, frame, &sweep, &mut false_alarms);
         self.identify(ctx, &mut pending);
 
-        // Tracking (Task 12) consumes the measurement list here.
+        let mut measurements: Vec<Measurement> =
+            pending.into_iter().map(|p| p.measurement).collect();
+        measurements.append(&mut false_alarms);
 
-        out.extend(
-            pending
-                .into_iter()
-                .map(|p| Observation::Measurement(p.measurement)),
-        );
-        out.extend(false_alarms.into_iter().map(Observation::Measurement));
+        #[cfg(feature = "tracking")]
+        let mut track_obs = Vec::new();
+        #[cfg(feature = "tracking")]
+        if let Some(manager) = &mut self.tracks {
+            let (antenna, dim) = (&self.cfg.antenna, self.cfg.dimension);
+            let covered = |p: Vector3| {
+                let (_, az, el) = frame.look_at(p);
+                illumination(&sweep, az, el, 0.0, antenna, dim).is_some()
+            };
+            with_tracker(&self.cfg.tracker, |tracker| {
+                manager.update(tracker, ctx.time, &measurements, covered, &mut track_obs);
+            });
+        }
+
+        out.extend(measurements.into_iter().map(Observation::Measurement));
+        #[cfg(feature = "tracking")]
+        out.append(&mut track_obs);
         if sweep.completed {
             out.push(Observation::ScanCompleted {
                 sensor: ctx.sensor,

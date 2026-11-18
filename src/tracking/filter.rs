@@ -7,6 +7,7 @@ use std::fmt::Debug;
 
 /// A 6×6 state covariance over `[x, y, z, vx, vy, vz]` (m, m/s).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Covariance6([[f64; 6]; 6]);
 
 impl Covariance6 {
@@ -308,7 +309,6 @@ impl Tracker for AlphaBeta {
 /// freedom: closed form `−2·ln(1 − p)` for 2, bisection on the CDF
 /// `erf(√(x/2)) − √(2x/π)·e^(−x/2)` for 3. `NaN` for other `dof` or `p`
 /// outside `(0, 1)`.
-#[cfg_attr(not(test), allow(dead_code))] // used by track management (T12)
 pub(crate) fn chi2_gate(probability: f64, dof: u32) -> f64 {
     if !(probability > 0.0 && probability < 1.0) {
         return f64::NAN;
