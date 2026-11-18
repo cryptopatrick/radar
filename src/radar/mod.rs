@@ -7,6 +7,7 @@ pub mod detection;
 pub mod false_alarm;
 pub mod measurement;
 pub mod scan;
+pub(crate) mod sensor;
 
 pub use antenna::{AntennaConfig, BeamPattern};
 pub use calibration::{Calibration, JammingReference, analytic_pd};

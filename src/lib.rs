@@ -7,6 +7,8 @@ pub mod geometry;
 pub mod ids;
 pub mod radar;
 pub mod random;
+pub mod sensor;
+pub mod simulation;
 pub mod time;
 #[cfg(feature = "tracking")]
 pub mod tracking;
@@ -25,6 +27,8 @@ pub mod prelude {
         RangeLimits, ScanConfig, ScanFrame,
     };
     pub use crate::random::{RandomSource, Seed, StreamId};
+    pub use crate::sensor::{Observation, SensorContext, SensorModel};
+    pub use crate::simulation::{SensorStatus, Simulation, SimulationConfig, StepPolicy};
     pub use crate::time::{SimDuration, SimTime};
     #[cfg(feature = "tracking")]
     pub use crate::tracking::TrackerConfig;

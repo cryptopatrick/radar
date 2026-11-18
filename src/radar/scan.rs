@@ -178,7 +178,6 @@ pub struct Sweep {
 /// azimuth 0; Sector and Raster at the low azimuth edge moving `+1` (Raster
 /// on its lowest row); Volume at azimuth 0 on the first bar; Steered at
 /// (0, 0); Custom at [`ScanState::default`].
-#[cfg_attr(not(test), allow(dead_code))] // Used by the radar sensor.
 pub(crate) fn initial_state(cfg: &ScanConfig) -> ScanState {
     let (azimuth, elevation) = match cfg {
         ScanConfig::Fixed { azimuth, elevation } => (*azimuth, *elevation),
@@ -209,7 +208,6 @@ pub(crate) fn initial_state(cfg: &ScanConfig) -> ScanState {
 
 /// Advances the beam by `dt_secs`, updating `state`, and returns the swept
 /// arc. After the call `state.azimuth == wrap_two_pi(start + delta)`.
-#[cfg_attr(not(test), allow(dead_code))] // Used by the radar sensor.
 pub(crate) fn advance(cfg: &mut ScanConfig, state: &mut ScanState, dt_secs: f64) -> Sweep {
     let start = wrap_two_pi(state.azimuth);
     let elevation = state.elevation;

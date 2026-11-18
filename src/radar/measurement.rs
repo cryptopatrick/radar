@@ -106,7 +106,6 @@ pub fn measurement_sigma(
 /// Adds Gaussian noise to a true measurement. Draws in the fixed order
 /// range, azimuth, elevation (3D only), radial velocity (if `Some`).
 /// Range is clamped at 0 and azimuth wrapped to `[0, 2π)`.
-#[cfg_attr(not(test), allow(dead_code))] // Used by the radar sensor.
 pub(crate) fn noisy_measurement(
     true_range: f64,
     true_az: f64,

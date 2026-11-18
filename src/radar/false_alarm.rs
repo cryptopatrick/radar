@@ -22,7 +22,6 @@ pub fn resolution_cells(
 
 /// A spurious detection before measurement noise.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))] // Used by the radar sensor.
 pub(crate) struct FalseAlarm {
     /// Range, m.
     pub range: f64,
@@ -59,7 +58,6 @@ fn draw_position(
 /// `count = poisson(pfa · cells)`; per alarm the draw order is range, two
 /// azimuth uniforms, elevation (3D only), then the power exponential.
 #[allow(clippy::too_many_arguments)]
-#[cfg_attr(not(test), allow(dead_code))] // Used by the radar sensor.
 pub(crate) fn generate_false_alarms(
     sweep: &Sweep,
     limits: &RangeLimits,
@@ -92,7 +90,6 @@ pub(crate) fn generate_false_alarms(
 /// Generates radius-mode false alarms:
 /// `count = poisson(false_alarms_per_scan × |delta| / 2π)`, same position
 /// draws, `measured_snr = 0.0`, no power draw.
-#[cfg_attr(not(test), allow(dead_code))] // Used by the radar sensor.
 pub(crate) fn generate_radius_false_alarms(
     sweep: &Sweep,
     limits: &RangeLimits,
