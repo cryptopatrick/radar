@@ -1,7 +1,14 @@
 //! Target tracking (feature `tracking`).
 
+mod filter;
+mod matrix;
+
+#[allow(unused_imports)] // used by track management (T12)
+pub(crate) use filter::chi2_gate;
+pub use filter::{AlphaBeta, Covariance6, KalmanCv, TrackState, Tracker};
+
 /// Which tracking filter a radar runs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TrackerConfig {
     /// No tracking.
@@ -18,6 +25,28 @@ pub enum TrackerConfig {
         /// Process-noise acceleration sigma, m/s².
         process_accel_sigma: f64,
     },
+    /// A user-supplied filter. Not serialisable and not validated.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    Custom(Box<dyn Tracker>),
+}
+
+impl TrackerConfig {
+    /// Clones the config, or returns `None` for [`TrackerConfig::Custom`].
+    pub fn try_clone(&self) -> Option<TrackerConfig> {
+        Some(match self {
+            TrackerConfig::None => TrackerConfig::None,
+            TrackerConfig::AlphaBeta { alpha, beta } => TrackerConfig::AlphaBeta {
+                alpha: *alpha,
+                beta: *beta,
+            },
+            TrackerConfig::Kalman {
+                process_accel_sigma,
+            } => TrackerConfig::Kalman {
+                process_accel_sigma: *process_accel_sigma,
+            },
+            TrackerConfig::Custom(_) => return None,
+        })
+    }
 }
 
 /// Track lifecycle parameters.
@@ -51,5 +80,25 @@ impl Default for TrackManagementConfig {
             initial_velocity_sigma: 300.0,
             max_position_sigma: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_clone_rejects_custom() {
+        let k = TrackerConfig::Kalman {
+            process_accel_sigma: 2.0,
+        };
+        assert!(matches!(
+            k.try_clone(),
+            Some(TrackerConfig::Kalman { process_accel_sigma }) if process_accel_sigma == 2.0
+        ));
+        let custom = TrackerConfig::Custom(Box::new(KalmanCv {
+            process_accel_sigma: 1.0,
+        }));
+        assert!(custom.try_clone().is_none());
     }
 }

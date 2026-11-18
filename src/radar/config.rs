@@ -419,7 +419,7 @@ impl RadarConfig {
     #[cfg(feature = "tracking")]
     fn validate_tracking(&self) -> Result<(), RadarError> {
         match self.tracker {
-            TrackerConfig::None => {}
+            TrackerConfig::None | TrackerConfig::Custom(_) => {}
             TrackerConfig::AlphaBeta { alpha, beta } => {
                 check(
                     alpha > 0.0 && alpha <= 1.0,
@@ -520,7 +520,7 @@ impl RadarConfig {
             doppler: self.doppler,
             identification: self.identification,
             #[cfg(feature = "tracking")]
-            tracker: self.tracker.clone(),
+            tracker: self.tracker.try_clone()?,
             #[cfg(feature = "tracking")]
             track_management: self.track_management.clone(),
             #[cfg(feature = "ew")]

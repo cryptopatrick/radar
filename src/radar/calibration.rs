@@ -184,7 +184,7 @@ pub fn analytic_pd(snr: f64, pfa: f64, swerling: Swerling) -> f64 {
 }
 
 /// Complementary error function (Numerical Recipes `erfcc`, |error| < 1.2e-7).
-fn erfc(x: f64) -> f64 {
+pub(crate) fn erfc(x: f64) -> f64 {
     let z = x.abs();
     let t = 1.0 / (1.0 + 0.5 * z);
     let ans = t
