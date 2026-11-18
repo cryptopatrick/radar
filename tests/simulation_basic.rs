@@ -317,7 +317,7 @@ fn reset_replays_identically() {
         vec![platform_at(Vector3::ZERO, 0.0)],
         vec![target(1, Vector3::new(20_000.0, 0.0, 0.0))],
     );
-    let mut sim = sim_with(cfg, w);
+    let mut sim = sim_with(cfg, w.clone());
     let run = |sim: &mut Simulation| {
         let mut out = Vec::new();
         for _ in 0..40 {
@@ -329,8 +329,43 @@ fn reset_replays_identically() {
     let first = run(&mut sim);
     sim.reset();
     assert_eq!(sim.now(), SimTime::ZERO);
+    sim.update_world(w).unwrap();
     let second = run(&mut sim);
     assert!(!measurements(&first).is_empty());
+    assert_eq!(first, second);
+}
+
+#[test]
+fn reset_replays_with_world_updates() {
+    let mut sim = Simulation::new(SimulationConfig::default().seed(Seed(99)));
+    sim.add_radar(
+        RADAR,
+        OWN,
+        Pose3::IDENTITY,
+        RadarConfig::surveillance_2d().unwrap(),
+    )
+    .unwrap();
+    let dt = SimDuration::from_millis(100);
+    let run = |sim: &mut Simulation| {
+        let mut out = Vec::new();
+        for i in 0..20u32 {
+            let t = SimTime::ZERO + SimDuration::from_millis(100 * u64::from(i));
+            let secs = t.as_secs_f64();
+            let mut tgt = target(1, Vector3::new(20_000.0, 5_000.0 - 50.0 * secs, 0.0));
+            tgt.velocity = Vector3::new(0.0, -50.0, 0.0);
+            let mut w = world(vec![platform_at(Vector3::ZERO, 0.0)], vec![tgt]);
+            w.time = t;
+            sim.update_world(w).unwrap();
+            sim.step_open(dt).unwrap();
+        }
+        sim.drain(RADAR, &mut out).unwrap();
+        out
+    };
+    let first = run(&mut sim);
+    sim.reset();
+    assert_eq!(sim.now(), SimTime::ZERO);
+    let second = run(&mut sim);
+    assert!(!measurements(&first).is_empty(), "{first:?}");
     assert_eq!(first, second);
 }
 

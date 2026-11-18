@@ -284,6 +284,9 @@ impl Simulation {
     /// Points a radar's boresight at (`azimuth`, `elevation`) in its scan
     /// frame immediately, with no sweep, clearing any pending command.
     ///
+    /// On a [`ScanConfig::Fixed`] scan this has no lasting effect: the next
+    /// update re-applies the configured pointing.
+    ///
     /// # Errors
     /// `UnknownSensor`; `InvalidConfig { field: "scan" }` if the sensor is
     /// not a radar; `InvalidConfig { field: "beam" }` for bad angles.
@@ -325,7 +328,9 @@ impl Simulation {
     ///
     /// # Errors
     /// `InvalidConfig` for a zero `Subdivide` step or a clock overflow; any
-    /// error a sensor model returns (the step stops there).
+    /// error a sensor model returns (the step stops there). After an error
+    /// the simulation state (clock, scan states, queues, random streams) is
+    /// unspecified until [`reset`](Self::reset).
     pub fn step(&mut self, dt: SimDuration, env: &dyn Environment) -> Result<(), RadarError> {
         if dt.is_zero() {
             return Ok(());
@@ -415,13 +420,19 @@ impl Simulation {
         })
     }
 
-    /// Restarts the run: time 0, each sensor due one period later, radar
-    /// scans at their initial state, queues cleared and random streams
-    /// rebuilt from the seed. Sensors, their enabled flags and the world are
-    /// kept. Custom sensor models and custom scan patterns keep any
-    /// internal state of their own.
+    /// Restores the state right after construction and sensor
+    /// registration: time 0, the world an empty snapshot at time 0, each
+    /// sensor due one period later, radar scans at their initial state,
+    /// queues cleared and random streams rebuilt from the seed. Sensors,
+    /// their configs and enabled flags are kept.
+    ///
+    /// The host must feed the world again with
+    /// [`update_world`](Self::update_world); replaying the same calls then
+    /// reproduces the same observations. Custom sensor models and custom
+    /// scan patterns keep any internal state of their own.
     pub fn reset(&mut self) {
         self.now = SimTime::ZERO;
+        self.world = WorldSnapshot::new(SimTime::ZERO);
         for (&id, e) in self.sensors.iter_mut() {
             e.next_due = SimTime::ZERO + e.period;
             e.queue.clear();
