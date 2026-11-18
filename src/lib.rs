@@ -20,8 +20,9 @@ pub mod prelude {
     pub use crate::geometry::{Pose3, Rotation3, Vector2, Vector3};
     pub use crate::ids::{EmitterId, PlatformId, SensorId, TargetId, TrackId, TransponderCode};
     pub use crate::radar::{
-        BeamPattern, Calibration, DetectionConfig, Dimension, MeasurementConfig, MeasurementSigma,
-        RadarConfig, RangeLimits, ScanConfig, ScanFrame,
+        BeamPattern, Calibration, DetectionConfig, DetectionContext, DetectionModel,
+        DetectionResult, Dimension, Measurement, MeasurementConfig, MeasurementSigma, RadarConfig,
+        RangeLimits, ScanConfig, ScanFrame,
     };
     pub use crate::random::{RandomSource, Seed, StreamId};
     pub use crate::time::{SimDuration, SimTime};

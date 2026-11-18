@@ -13,8 +13,10 @@ pub use config::{
     DetectionConfig, Dimension, IdentificationConfig, RadarConfig, RadarConfigBuilder,
     RangeEquationConfig, RangeLimits, ScanFrame,
 };
-pub use detection::{DetectionContext, DetectionModel, DetectionResult};
-pub use measurement::{MeasurementConfig, MeasurementSigma};
+pub use detection::{
+    DetectionContext, DetectionModel, DetectionResult, RadiusDetector, RangeEquationDetector,
+};
+pub use measurement::{Measurement, MeasurementConfig, MeasurementSigma, measurement_sigma};
 pub use scan::{
     ScanConfig, ScanPattern, ScanState, Sweep, half_extent, illumination, max_sweep_per_update,
 };
