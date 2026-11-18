@@ -3,7 +3,6 @@
 
 use super::matrix::{Matrix, inverse3};
 use crate::geometry::Vector3;
-use std::cell::Cell;
 use std::fmt::Debug;
 
 /// A 6×6 state covariance over `[x, y, z, vx, vy, vz]` (m, m/s).
@@ -16,13 +15,13 @@ impl Covariance6 {
         Covariance6(m)
     }
 
-    /// Element `(i, j)`.
-    ///
-    /// # Panics
-    ///
-    /// If `i` or `j` is 6 or more.
+    /// Element `(i, j)`, or `NaN` if `i` or `j` is 6 or more.
     pub fn get(&self, i: usize, j: usize) -> f64 {
-        self.0[i][j]
+        self.0
+            .get(i)
+            .and_then(|row| row.get(j))
+            .copied()
+            .unwrap_or(f64::NAN)
     }
 
     /// The position block, m².
@@ -63,29 +62,47 @@ pub struct TrackState {
     pub x: [f64; 6],
     /// State covariance.
     pub p: Covariance6,
+    /// Seconds predicted since the last measurement update.
+    pub elapsed: f64,
 }
 
 impl TrackState {
+    /// A freshly updated state (`elapsed` 0).
+    pub fn new(x: [f64; 6], p: Covariance6) -> Self {
+        TrackState { x, p, elapsed: 0.0 }
+    }
+
     fn column(&self) -> Matrix<6, 1> {
         Matrix(self.x.map(|v| [v]))
     }
 
-    fn from_parts(x: Matrix<6, 1>, p: Matrix<6, 6>) -> TrackState {
+    fn from_parts(x: Matrix<6, 1>, p: Matrix<6, 6>, elapsed: f64) -> TrackState {
         TrackState {
             x: x.0.map(|[v]| v),
             p: Covariance6(p.0),
+            elapsed,
         }
+    }
+
+    fn is_finite(&self) -> bool {
+        self.x
+            .iter()
+            .chain(self.p.0.iter().flatten())
+            .all(|v| v.is_finite())
     }
 }
 
 /// A tracking filter. Implementations must be pure functions of their
-/// inputs (apart from documented filter memory) so runs replay.
+/// inputs so runs replay and one tracker can serve many tracks; per-track
+/// timing lives in [`TrackState::elapsed`].
 pub trait Tracker: Send + Debug {
-    /// Propagates `s` forward by `dt` seconds.
+    /// Propagates `s` forward by `dt` seconds. Built-in filters add `dt` to
+    /// `elapsed`; a `dt` that is not finite and positive is a no-op.
     fn predict(&self, s: &TrackState, dt: f64) -> TrackState;
 
     /// Updates `s` with a world-frame position measurement `z` of covariance
-    /// `r` (m²).
+    /// `r` (m²). Built-in filters reset `elapsed` to 0 (a skipped update
+    /// returns `s` unchanged).
     fn update_position(&self, s: &TrackState, z: Vector3, r: [[f64; 3]; 3]) -> TrackState;
 
     /// Updates `s` with a radial velocity `rv` (m/s, positive = opening) of
@@ -126,13 +143,8 @@ fn kalman_update<const M: usize>(
     let x = s.column() + k * y;
     let ikh = Matrix::<6, 6>::identity() - k * h;
     let p = ikh * p * ikh.transpose() + k * r * k.transpose();
-    let next = TrackState::from_parts(x, p);
-    let finite = next
-        .x
-        .iter()
-        .chain(next.p.0.iter().flatten())
-        .all(|v| v.is_finite());
-    if finite { next } else { s.clone() }
+    let next = TrackState::from_parts(x, p, 0.0);
+    if next.is_finite() { next } else { s.clone() }
 }
 
 /// Constant-velocity Kalman filter with white-acceleration process noise and
@@ -145,10 +157,11 @@ pub struct KalmanCv {
 
 impl Tracker for KalmanCv {
     /// `x' = F·x`, `P' = F·P·Fᵀ + Q` with per-axis
-    /// `Q = q²·[[dt⁴/4, dt³/2], [dt³/2, dt²]]`. A non-finite or negative `dt`
-    /// leaves the state unchanged.
+    /// `Q = q²·[[dt⁴/4, dt³/2], [dt³/2, dt²]]`. A `dt` that is not finite
+    /// and positive leaves the state unchanged; a non-finite result returns
+    /// the input state with only `elapsed` advanced.
     fn predict(&self, s: &TrackState, dt: f64) -> TrackState {
-        if !dt.is_finite() || dt < 0.0 {
+        if !dt.is_finite() || dt <= 0.0 {
             return s.clone();
         }
         let f = transition(dt);
@@ -161,7 +174,16 @@ impl Tracker for KalmanCv {
             q.0[i + 3][i + 3] = q2 * dt * dt;
         }
         let p = f * s.p.matrix() * f.transpose() + q;
-        TrackState::from_parts(f * s.column(), p)
+        let elapsed = s.elapsed + dt;
+        let next = TrackState::from_parts(f * s.column(), p, elapsed);
+        if next.is_finite() {
+            next
+        } else {
+            TrackState {
+                elapsed,
+                ..s.clone()
+            }
+        }
     }
 
     /// Linear update with `H = [I 0]`. Skipped (state returned unchanged)
@@ -222,48 +244,48 @@ impl Tracker for KalmanCv {
 }
 
 /// Alpha-beta filter. After an update the covariance is `P_pos = α·R`,
-/// `P_vel = (β/dt)²·R` with zero cross terms, where `dt` is the interval of
-/// the most recent [`Tracker::predict`] call (initially 1 s). Radial
+/// `P_vel = (β/dt)²·R` with zero cross terms, where `dt` is the track's
+/// [`TrackState::elapsed`] (1 s if that is not finite and positive). Radial
 /// velocity is ignored.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AlphaBeta {
     /// Position gain, in `(0, 1]`.
     pub alpha: f64,
     /// Velocity gain, in `(0, 2)`.
     pub beta: f64,
-    last_dt: Cell<f64>,
-}
-
-impl AlphaBeta {
-    /// Creates the filter with gains `alpha` and `beta`.
-    pub fn new(alpha: f64, beta: f64) -> Self {
-        AlphaBeta {
-            alpha,
-            beta,
-            last_dt: Cell::new(1.0),
-        }
-    }
 }
 
 impl Tracker for AlphaBeta {
-    /// `x' = F·x`, `P' = F·P·Fᵀ` (no process noise). Remembers `dt` if it
-    /// is finite and positive; a non-finite or negative `dt` leaves the
-    /// state unchanged.
+    /// `x' = F·x`, `P' = F·P·Fᵀ` (no process noise), `elapsed += dt`. A `dt`
+    /// that is not finite and positive leaves the state unchanged; a
+    /// non-finite result returns the input state with only `elapsed`
+    /// advanced.
     fn predict(&self, s: &TrackState, dt: f64) -> TrackState {
-        if !dt.is_finite() || dt < 0.0 {
+        if !dt.is_finite() || dt <= 0.0 {
             return s.clone();
         }
-        if dt > 0.0 {
-            self.last_dt.set(dt);
-        }
         let f = transition(dt);
-        TrackState::from_parts(f * s.column(), f * s.p.matrix() * f.transpose())
+        let elapsed = s.elapsed + dt;
+        let next =
+            TrackState::from_parts(f * s.column(), f * s.p.matrix() * f.transpose(), elapsed);
+        if next.is_finite() {
+            next
+        } else {
+            TrackState {
+                elapsed,
+                ..s.clone()
+            }
+        }
     }
 
     /// `pos += α·(z − pos)`, `vel += (β/dt)·(z − pos)`. Skipped if anything
     /// is non-finite.
     fn update_position(&self, s: &TrackState, z: Vector3, r: [[f64; 3]; 3]) -> TrackState {
-        let dt = self.last_dt.get();
+        let dt = if s.elapsed.is_finite() && s.elapsed > 0.0 {
+            s.elapsed
+        } else {
+            1.0
+        };
         let g = self.beta / dt;
         let resid = [z.x - s.x[0], z.y - s.x[1], z.z - s.x[2]];
         let mut next = s.clone();
@@ -277,12 +299,8 @@ impl Tracker for AlphaBeta {
             }
         }
         next.p = Covariance6(p);
-        let finite = next
-            .x
-            .iter()
-            .chain(p.iter().flatten())
-            .all(|v| v.is_finite());
-        if finite { next } else { s.clone() }
+        next.elapsed = 0.0;
+        if next.is_finite() { next } else { s.clone() }
     }
 }
 
@@ -349,10 +367,7 @@ mod tests {
             p[i][i] = 25.0;
             p[i + 3][i + 3] = 300.0 * 300.0;
         }
-        TrackState {
-            x: [pos.x, pos.y, pos.z, 0.0, 0.0, 0.0],
-            p: Covariance6::new(p),
-        }
+        TrackState::new([pos.x, pos.y, pos.z, 0.0, 0.0, 0.0], Covariance6::new(p))
     }
 
     fn velocity_error(s: &TrackState) -> f64 {
@@ -439,7 +454,10 @@ mod tests {
     #[test]
     fn alpha_beta_tracks_cv() {
         // Near-critically damped gains (β ≈ α²/(2 − α)).
-        let ab = AlphaBeta::new(0.3, 0.05);
+        let ab = AlphaBeta {
+            alpha: 0.3,
+            beta: 0.05,
+        };
         let (s, _) = run(&ab, 50, None);
         assert!(
             velocity_error(&s) < 2.0,
@@ -464,10 +482,7 @@ mod tests {
         assert!(trace(p.p.position()) > trace(s.p.position()));
         assert!(p.p.position_sigma() > s.p.position_sigma());
         assert_eq!(p.x[0], s.x[0]);
-        let moving = TrackState {
-            x: [0.0, 0.0, 0.0, 1.0, 2.0, 3.0],
-            p: s.p,
-        };
+        let moving = TrackState::new([0.0, 0.0, 0.0, 1.0, 2.0, 3.0], s.p);
         let q = kf.predict(&moving, 2.0);
         assert_eq!(&q.x[..3], &[2.0, 4.0, 6.0]);
         // Zero process noise still grows position via velocity uncertainty.
@@ -476,10 +491,61 @@ mod tests {
         };
         assert!(still.predict(&s, 1.0).p.position_sigma() > s.p.position_sigma());
         // Alpha-beta prediction grows too.
-        let ab = AlphaBeta::new(0.5, 0.2);
+        let ab = AlphaBeta {
+            alpha: 0.5,
+            beta: 0.2,
+        };
         assert!(ab.predict(&s, 1.0).p.position_sigma() > s.p.position_sigma());
         // Non-finite dt leaves the state unchanged.
         assert_eq!(kf.predict(&s, f64::NAN), s);
+    }
+
+    #[test]
+    fn alpha_beta_per_track_dt() {
+        let ab = AlphaBeta {
+            alpha: 0.3,
+            beta: 0.05,
+        };
+        let z = START + Vector3::new(4.0, -2.0, 1.0);
+        let a = ab.predict(&initial(START), 1.0);
+        let b = ab.predict(&initial(START * 2.0), 3.0);
+        assert_eq!((a.elapsed, b.elapsed), (1.0, 3.0));
+        let a = ab.update_position(&a, z, diag(25.0));
+        // A fresh single-track run with the same inputs gives the same result.
+        let fresh = AlphaBeta {
+            alpha: 0.3,
+            beta: 0.05,
+        };
+        let solo = fresh.update_position(&fresh.predict(&initial(START), 1.0), z, diag(25.0));
+        assert_eq!(a, solo);
+        // Velocity gain β/1 applied to the residual (4, −2, 1).
+        assert!((a.x[3] - 0.05 * 4.0).abs() < 1e-12);
+        assert!((a.x[4] + 0.05 * 2.0).abs() < 1e-12);
+        assert_eq!(a.elapsed, 0.0);
+        // Elapsed accumulates over coasts: two 1.5 s predicts use dt = 3.
+        let coast = ab.predict(&ab.predict(&initial(START), 1.5), 1.5);
+        assert_eq!(coast.elapsed, 3.0);
+        let c = ab.update_position(&coast, z, diag(25.0));
+        assert!((c.x[3] - 0.05 / 3.0 * 4.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn kalman_elapsed_and_nan_safety() {
+        let kf = KalmanCv {
+            process_accel_sigma: 0.1,
+        };
+        let s = kf.predict(&initial(START), 2.0);
+        assert_eq!(s.elapsed, 2.0);
+        assert_eq!(kf.update_position(&s, START, diag(25.0)).elapsed, 0.0);
+        let rv = kf.update_radial_velocity(&s, 1.0, 0.5, SENSOR);
+        assert_eq!(rv.elapsed, 0.0);
+        assert_eq!(kf.predict(&s, 0.0), s);
+        assert_eq!(kf.predict(&s, -1.0), s);
+        // Overflowing prediction keeps the input state, elapsed advanced.
+        let huge = kf.predict(&s, 1e300);
+        assert_eq!(huge.x, s.x);
+        assert_eq!(huge.p, s.p);
+        assert_eq!(huge.elapsed, 2.0 + 1e300);
     }
 
     #[test]
@@ -496,5 +562,7 @@ mod tests {
         );
         assert_eq!(c.velocity()[2][2], 6.0);
         assert!((c.position_sigma() - 6.0_f64.sqrt()).abs() < 1e-12);
+        assert!(c.get(6, 0).is_nan());
+        assert!(c.get(0, 6).is_nan());
     }
 }
