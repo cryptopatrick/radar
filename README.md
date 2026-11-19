@@ -89,7 +89,8 @@ The core (geometry, time, world, sensors, radar, simulation) is always on.
 
 - Each sensor draws from its own ChaCha8 stream derived from the master seed
   and its `SensorId`, in a fixed order (targets by ascending `TargetId`, then
-  false alarms, then identification replies, then tracking). Samplers are
+  false alarms, then identification replies, then jamming strobes, then
+  tracking). Samplers are
   implemented in-crate, so dependency updates do not change streams.
 - The same seed and the same inputs give an identical observation stream.
   Adding, removing or disabling one sensor never changes another sensor's
@@ -121,6 +122,12 @@ The core (geometry, time, world, sensors, radar, simulation) is always on.
   `(confirm_n + 1) ×` the nominal revisit. A steered beam that revisits more
   slowly than its slew limit allows needs `tentative_max_age` set
   explicitly.
+- **Confident-coverage miss counting:** a pass of the beam counts as a
+  miss only if the track's predicted direction was inside the beam by the
+  track's own angular uncertainty (capped at half the half-beamwidth). A
+  track that is only grazed at a beam edge gets no outcome, so an uncertain
+  track near an elevation-bar or sector edge is not driven into coasting,
+  at the cost of detecting real fades there more slowly.
 - **Emitters are not extrapolated:** jammer positions are taken as given in
   each snapshot, not moved between snapshots.
 
@@ -128,7 +135,7 @@ The core (geometry, time, world, sensors, radar, simulation) is always on.
 
 `cargo bench` (`benches/radar_2d.rs`): one `step(100 ms)` of a
 `surveillance_2d` radar against 1 000 targets spread uniformly within 90 km
-takes about **450 µs** (≈ 2 200 updates/s, against a target of 60) on an
+takes about **430 µs** (≈ 2 300 updates/s, against a target of 60) on an
 Apple M2 with rustc 1.99, release profile.
 
 ## License
