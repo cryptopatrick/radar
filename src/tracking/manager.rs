@@ -11,6 +11,7 @@ use crate::radar::measurement::Measurement;
 use crate::sensor::Observation;
 use crate::time::SimTime;
 use std::collections::{BTreeMap, VecDeque};
+use std::f64::consts::PI;
 
 /// Variance of the pinned vertical states (z in m², vz in (m/s)²) of 2D
 /// tracks, and of the z component of a 2D measurement.
@@ -156,6 +157,25 @@ pub(crate) fn with_tracker<R>(cfg: &TrackerConfig, f: impl FnOnce(&dyn Tracker) 
     }
 }
 
+/// How the beam moved during one update, for dwell bookkeeping.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct BeamMotion {
+    /// Whether the scan sweeps (Circular, Sector, Raster, Volume). For other
+    /// scans every update is its own dwell.
+    pub(crate) sweeping: bool,
+    /// Azimuth swept this update, `|delta|`, rad.
+    pub(crate) swept: f64,
+}
+
+/// A run of consecutive updates in which a track was in the beam.
+#[derive(Debug, Clone, Copy, Default)]
+struct Dwell {
+    /// Azimuth swept since the dwell started, rad.
+    swept: f64,
+    /// Whether the dwell already produced a hit.
+    hit: bool,
+}
+
 /// One live track and its bookkeeping.
 #[derive(Debug, Clone)]
 struct Record {
@@ -170,14 +190,37 @@ struct Record {
     /// The last N illuminated outcomes (true = hit), oldest first.
     window: VecDeque<bool>,
     codes: BTreeMap<TransponderCode, u32>,
+    /// The current dwell (sweeping scans only).
+    dwell: Option<Dwell>,
 }
 
 impl Record {
-    fn record(&mut self, hit: bool, n: u32) {
+    /// Records one dwell outcome in the M-of-N window and applies
+    /// confirmation; returns true if a tentative track fails M-of-N.
+    fn record(&mut self, hit: bool, m: u32, n: u32) -> bool {
         self.window.push_back(hit);
         while self.window.len() > n as usize {
             self.window.pop_front();
         }
+        if self.status != TrackStatus::Tentative {
+            return false;
+        }
+        let hits = self.window.iter().filter(|h| **h).count();
+        if hits >= m as usize {
+            self.status = TrackStatus::Confirmed;
+            false
+        } else {
+            self.window.len() >= n as usize
+        }
+    }
+
+    /// Records a miss; returns true if a tentative track fails M-of-N.
+    fn miss(&mut self, m: u32, n: u32) -> bool {
+        self.consecutive_misses = self.consecutive_misses.saturating_add(1);
+        if self.status == TrackStatus::Confirmed {
+            self.status = TrackStatus::Coasting;
+        }
+        self.record(false, m, n)
     }
 
     fn identity(&self) -> Option<TransponderCode> {
@@ -283,14 +326,15 @@ impl TrackManager {
 
     /// Squared Mahalanobis distance of `z` from the predicted position, over
     /// x, y in 2D and x, y, z in 3D; `None` if the innovation covariance is
-    /// singular or anything is non-finite.
+    /// singular (`|det| ≤ 1e-12·∏|diagᵢ|`) or the result is not finite and
+    /// non-negative.
     fn distance2(&self, s: &TrackState, z: Vector3, r: &[[f64; 3]; 3]) -> Option<f64> {
         let y = [z.x - s.x[0], z.y - s.x[1], z.z - s.x[2]];
         let sc = |i: usize, j: usize| s.p.get(i, j) + r[i][j];
         let d2 = if self.dim == Dimension::TwoD {
             let (a, b, c, d) = (sc(0, 0), sc(0, 1), sc(1, 0), sc(1, 1));
             let det = a * d - b * c;
-            if !det.is_finite() || det.abs() < 1e-18 {
+            if !det.is_finite() || det.abs() <= 1e-12 * (a * d).abs() {
                 return None;
             }
             (d * y[0] * y[0] - (b + c) * y[0] * y[1] + a * y[1] * y[1]) / det
@@ -305,23 +349,51 @@ impl TrackManager {
             let yv = Matrix([[y[0]], [y[1]], [y[2]]]);
             (yv.transpose() * inv * yv).0[0][0]
         };
-        d2.is_finite().then_some(d2)
+        (d2.is_finite() && d2 >= 0.0).then_some(d2)
     }
 
-    /// Applies an associated measurement to a predicted state.
-    fn apply(
+    /// Applies an associated measurement to the predicted state `pred` and
+    /// records a hit; returns true if the filter state was committed. A
+    /// skipped position update (the filter returned `pred` unchanged) counts
+    /// as a hit for M-of-N but leaves the last-hit state, time and misses
+    /// untouched, so elapsed time is not double-counted.
+    #[allow(clippy::too_many_arguments)]
+    fn hit(
         &self,
         tracker: &dyn Tracker,
-        s: &TrackState,
+        rec: &mut Record,
+        pred: &TrackState,
         m: &Measurement,
-        z: Vector3,
-        r: [[f64; 3]; 3],
-    ) -> TrackState {
-        let mut s = tracker.update_position(s, z, r);
-        if let Some(rv) = m.radial_velocity {
-            s = tracker.update_radial_velocity(&s, rv, m.sigma.radial_velocity, m.sensor_position);
+        (z, r): (Vector3, [[f64; 3]; 3]),
+        time: SimTime,
+        delete: &mut bool,
+    ) -> bool {
+        let updated = tracker.update_position(pred, z, r);
+        let applied = updated != *pred;
+        if applied {
+            let mut s = updated;
+            if let Some(rv) = m.radial_velocity {
+                s = tracker.update_radial_velocity(
+                    &s,
+                    rv,
+                    m.sigma.radial_velocity,
+                    m.sensor_position,
+                    m.sensor_velocity,
+                );
+            }
+            rec.state = self.pin(s);
+            rec.time = time;
+            rec.consecutive_misses = 0;
+            if rec.status == TrackStatus::Coasting {
+                rec.status = TrackStatus::Confirmed;
+            }
         }
-        self.pin(s)
+        rec.hits = rec.hits.saturating_add(1);
+        if let Some(code) = m.identity {
+            *rec.codes.entry(code).or_insert(0) += 1;
+        }
+        *delete |= rec.record(true, self.mgmt.confirm_m, self.mgmt.confirm_n);
+        applied
     }
 
     /// Processes one radar update at `time`: predicts, gates, associates,
@@ -331,10 +403,18 @@ impl TrackManager {
     /// `TrackDeleted` for every deleted track (in id order). `covered` says
     /// whether the beam illuminated a world position this update; only
     /// covered tracks can miss.
+    ///
+    /// With a sweeping scan, a track's consecutive in-beam updates form one
+    /// dwell with at most one outcome: the first associated measurement
+    /// updates the filter; later ones in the same dwell are absorbed (no
+    /// update, no new track); a miss is recorded when the dwell ends (the
+    /// track leaves the beam, or π has been swept) without a hit. Otherwise
+    /// every update is its own dwell.
     pub(crate) fn update(
         &mut self,
         tracker: &dyn Tracker,
         time: SimTime,
+        beam: BeamMotion,
         measurements: &[Measurement],
         covered: impl Fn(Vector3) -> bool,
         out: &mut Vec<Observation>,
@@ -372,49 +452,50 @@ impl TrackManager {
             }
         }
 
-        // 4–8. Hits, misses, confirmation and deletion.
+        // 4–8. Dwell outcomes, confirmation and deletion.
         let (m_of_n, n) = (self.mgmt.confirm_m, self.mgmt.confirm_n);
         let mut deleted = Vec::new();
         let mut records = std::mem::take(&mut self.tracks);
         let mut kept = Vec::with_capacity(records.len() + measurements.len());
         for ((mut rec, pred), assignment) in records.drain(..).zip(predicted).zip(assigned) {
-            let outcome = match assignment {
-                Some(mi) => {
-                    let (z, r) = converted[mi];
-                    rec.state = self.apply(tracker, &pred, &measurements[mi], z, r);
-                    rec.time = time;
-                    rec.hits = rec.hits.saturating_add(1);
-                    rec.consecutive_misses = 0;
-                    if let Some(code) = measurements[mi].identity {
-                        *rec.codes.entry(code).or_insert(0) += 1;
-                    }
-                    if rec.status == TrackStatus::Coasting {
-                        rec.status = TrackStatus::Confirmed;
-                    }
-                    Some(true)
-                }
-                None if covered(Vector3::new(pred.x[0], pred.x[1], pred.x[2])) => {
-                    rec.consecutive_misses = rec.consecutive_misses.saturating_add(1);
-                    if rec.status == TrackStatus::Confirmed {
-                        rec.status = TrackStatus::Coasting;
-                    }
-                    Some(false)
-                }
-                None => None,
-            };
+            let in_cover = covered(Vector3::new(pred.x[0], pred.x[1], pred.x[2]));
             let mut delete = false;
-            if let Some(hit) = outcome {
-                rec.record(hit, n);
-                if rec.status == TrackStatus::Tentative {
-                    let hits = rec.window.iter().filter(|h| **h).count();
-                    if hits >= m_of_n as usize {
-                        rec.status = TrackStatus::Confirmed;
-                    } else if rec.window.len() >= n as usize {
-                        delete = true;
+            let mut reported = false;
+            let mut applied = false;
+            let mut on_hit = |rec: &mut Record, delete: &mut bool| {
+                if let Some(mi) = assignment {
+                    let zr = converted[mi];
+                    applied = self.hit(tracker, rec, &pred, &measurements[mi], zr, time, delete);
+                }
+            };
+            if beam.sweeping {
+                let in_beam = in_cover || assignment.is_some();
+                if let Some(d) = rec.dwell {
+                    if !in_beam || d.swept >= PI {
+                        if !d.hit {
+                            delete |= rec.miss(m_of_n, n);
+                            reported = true;
+                        }
+                        rec.dwell = None;
                     }
                 }
+                if in_beam {
+                    let d = rec.dwell.get_or_insert_with(Dwell::default);
+                    d.swept += beam.swept;
+                    if assignment.is_some() && !d.hit {
+                        d.hit = true;
+                        on_hit(&mut rec, &mut delete);
+                        reported = true;
+                    }
+                }
+            } else if assignment.is_some() {
+                on_hit(&mut rec, &mut delete);
+                reported = true;
+            } else if in_cover {
+                delete |= rec.miss(m_of_n, n);
+                reported = true;
             }
-            let sigma = if outcome == Some(true) {
+            let sigma = if applied {
                 rec.state.p.position_sigma()
             } else {
                 pred.p.position_sigma()
@@ -426,7 +507,7 @@ impl TrackManager {
                 rec.status = TrackStatus::Deleted;
                 deleted.push(rec.id);
             }
-            if outcome.is_some() {
+            if reported {
                 out.push(Observation::TrackUpdated(self.snapshot(&rec)));
             }
             if !delete {
@@ -456,6 +537,7 @@ impl TrackManager {
                     rv,
                     m.sigma.radial_velocity,
                     m.sensor_position,
+                    m.sensor_velocity,
                 ),
                 None => initial,
             };
@@ -469,15 +551,16 @@ impl TrackManager {
                 consecutive_misses: 0,
                 window: VecDeque::new(),
                 codes: BTreeMap::new(),
+                dwell: beam.sweeping.then_some(Dwell {
+                    swept: beam.swept,
+                    hit: true,
+                }),
             };
             self.next_id += 1;
             if let Some(code) = m.identity {
                 rec.codes.insert(code, 1);
             }
-            rec.record(true, n);
-            if rec.window.iter().filter(|h| **h).count() >= m_of_n as usize {
-                rec.status = TrackStatus::Confirmed;
-            }
+            rec.record(true, m_of_n, n);
             out.push(Observation::TrackUpdated(self.snapshot(&rec)));
             self.tracks.push(rec);
         }

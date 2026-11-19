@@ -9,12 +9,14 @@ use crate::radar::detection::{
 };
 use crate::radar::false_alarm::{FalseAlarm, generate_false_alarms, generate_radius_false_alarms};
 use crate::radar::measurement::{Measurement, measurement_sigma, noisy_measurement};
+#[cfg(feature = "tracking")]
+use crate::radar::scan::ScanConfig;
 use crate::radar::scan::{ScanState, Sweep, advance, half_extent, illumination, initial_state};
 use crate::random::RandomSource;
 use crate::random::sample::{bernoulli, uniform01};
 use crate::sensor::{Observation, SensorContext, SensorModel};
 #[cfg(feature = "tracking")]
-use crate::tracking::{Track, TrackManager, TrackerConfig, with_tracker};
+use crate::tracking::{BeamMotion, Track, TrackManager, TrackerConfig, with_tracker};
 use crate::units::linear_to_db;
 use std::f64::consts::FRAC_PI_2;
 
@@ -188,6 +190,7 @@ impl RadarSensor {
             sigma,
             identity: None,
             sensor_position: frame.position,
+            sensor_velocity: ctx.platform.velocity,
         }
     }
 
@@ -340,6 +343,12 @@ impl SensorModel for RadarSensor {
         let mut measurements: Vec<Measurement> =
             pending.into_iter().map(|p| p.measurement).collect();
         measurements.append(&mut false_alarms);
+        // List position must not reveal targets or false alarms.
+        measurements.sort_by(|a, b| {
+            a.range
+                .total_cmp(&b.range)
+                .then(a.azimuth.total_cmp(&b.azimuth))
+        });
 
         #[cfg(feature = "tracking")]
         let mut track_obs = Vec::new();
@@ -350,8 +359,25 @@ impl SensorModel for RadarSensor {
                 let (_, az, el) = frame.look_at(p);
                 illumination(&sweep, az, el, 0.0, antenna, dim).is_some()
             };
+            let beam = BeamMotion {
+                sweeping: matches!(
+                    self.cfg.scan,
+                    ScanConfig::Circular { .. }
+                        | ScanConfig::Sector { .. }
+                        | ScanConfig::Raster { .. }
+                        | ScanConfig::Volume { .. }
+                ),
+                swept: sweep.delta_azimuth.abs(),
+            };
             with_tracker(&self.cfg.tracker, |tracker| {
-                manager.update(tracker, ctx.time, &measurements, covered, &mut track_obs);
+                manager.update(
+                    tracker,
+                    ctx.time,
+                    beam,
+                    &measurements,
+                    covered,
+                    &mut track_obs,
+                );
             });
         }
 

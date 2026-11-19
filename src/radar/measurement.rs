@@ -67,6 +67,9 @@ pub struct Measurement {
     pub identity: Option<TransponderCode>,
     /// World position of the sensor when the measurement was made.
     pub sensor_position: Vector3,
+    /// World velocity of the sensor when the measurement was made (the
+    /// radial velocity is relative to it).
+    pub sensor_velocity: Vector3,
 }
 
 /// Computes the measurement sigmas for one detection.

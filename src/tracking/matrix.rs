@@ -75,8 +75,10 @@ impl<const R: usize, const C: usize> Sub for Matrix<R, C> {
     }
 }
 
-/// Inverse of a 3×3 matrix by cofactors; `None` if `|det| < 1e-18`, the
-/// determinant is not finite, or the result is not finite.
+/// Inverse of a 3×3 matrix by cofactors; `None` if the determinant is not
+/// finite, `|det| ≤ 1e-12·|m₀₀·m₁₁·m₂₂|` (a scale-invariant singularity
+/// test per axis; exactly 0 is rejected when a diagonal element is 0), or
+/// the result is not finite.
 pub(crate) fn inverse3(m: &Matrix<3, 3>) -> Option<Matrix<3, 3>> {
     let a = &m.0;
     let c =
@@ -88,7 +90,8 @@ pub(crate) fn inverse3(m: &Matrix<3, 3>) -> Option<Matrix<3, 3>> {
         [c(1, 2, 0, 1), -c(0, 2, 0, 1), c(0, 1, 0, 1)],
     ]);
     let det = a[0][0] * adj.0[0][0] + a[0][1] * adj.0[1][0] + a[0][2] * adj.0[2][0];
-    if !det.is_finite() || det.abs() < 1e-18 {
+    let scale = (a[0][0] * a[1][1] * a[2][2]).abs();
+    if !det.is_finite() || det.abs() <= 1e-12 * scale {
         return None;
     }
     let inv = adj.scale(1.0 / det);
@@ -110,5 +113,12 @@ mod tests {
         let m = Matrix([[4.0, 1.0, 0.0], [1.0, 3.0, 1.0], [0.0, 1.0, 2.0]]);
         let p = m * inverse3(&m).unwrap() - Matrix::identity();
         assert!(p.0.iter().flatten().all(|v| v.abs() < 1e-12));
+        // The threshold is relative: a tiny but well-conditioned matrix inverts.
+        let tiny = Matrix::<3, 3>::identity().scale(1e-7);
+        assert!(inverse3(&tiny).is_some());
+        // Disparate but independent axis scales are fine.
+        let skew = Matrix([[1e7, 0.0, 0.0], [0.0, 1e7, 0.0], [0.0, 0.0, 2e-6]]);
+        assert!(inverse3(&skew).is_some());
+        assert_eq!(inverse3(&Matrix::zeros()), None);
     }
 }

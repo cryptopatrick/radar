@@ -107,16 +107,18 @@ pub trait Tracker: Send + Debug {
     fn update_position(&self, s: &TrackState, z: Vector3, r: [[f64; 3]; 3]) -> TrackState;
 
     /// Updates `s` with a radial velocity `rv` (m/s, positive = opening) of
-    /// standard deviation `sigma`, measured from `sensor_pos`. The default
-    /// ignores the measurement.
+    /// standard deviation `sigma`, measured relative to a sensor at
+    /// `sensor_pos` moving at `sensor_vel`. The default ignores the
+    /// measurement.
     fn update_radial_velocity(
         &self,
         s: &TrackState,
         rv: f64,
         sigma: f64,
         sensor_pos: Vector3,
+        sensor_vel: Vector3,
     ) -> TrackState {
-        let _ = (rv, sigma, sensor_pos);
+        let _ = (rv, sigma, sensor_pos, sensor_vel);
         s.clone()
     }
 }
@@ -205,18 +207,24 @@ impl Tracker for KalmanCv {
         kalman_update(s, h, y, r, s_inv)
     }
 
-    /// EKF update with `h(x) = u·v` and `H = [(v − (u·v)·u)/r, u]`, where
-    /// `u` is the line-of-sight unit vector from `sensor_pos` to the
-    /// predicted position and `r` its range. Skipped if `r < 1e-6`, the
-    /// innovation variance is not positive, or anything is non-finite.
+    /// EKF update with `h(x) = u·w` and `H = [(w − (u·w)·u)/r, u]`, where
+    /// `w = v − sensor_vel` is the velocity relative to the sensor, `u` the
+    /// line-of-sight unit vector from `sensor_pos` to the predicted position
+    /// and `r` its range. Skipped if `r < 1e-6`, the innovation variance is
+    /// not positive, or anything is non-finite.
     fn update_radial_velocity(
         &self,
         s: &TrackState,
         rv: f64,
         sigma: f64,
         sensor_pos: Vector3,
+        sensor_vel: Vector3,
     ) -> TrackState {
-        if !rv.is_finite() || !sigma.is_finite() || !sensor_pos.is_finite() {
+        if !rv.is_finite()
+            || !sigma.is_finite()
+            || !sensor_pos.is_finite()
+            || !sensor_vel.is_finite()
+        {
             return s.clone();
         }
         let los = Vector3::new(s.x[0], s.x[1], s.x[2]) - sensor_pos;
@@ -225,7 +233,7 @@ impl Tracker for KalmanCv {
             return s.clone();
         }
         let u = los * (1.0 / range);
-        let v = Vector3::new(s.x[3], s.x[4], s.x[5]);
+        let v = Vector3::new(s.x[3], s.x[4], s.x[5]) - sensor_vel;
         let uv = u.dot(v);
         let dpos = (v - u * uv) * (1.0 / range);
         let h = Matrix([[dpos.x, dpos.y, dpos.z, u.x, u.y, u.z]]);
@@ -244,8 +252,12 @@ impl Tracker for KalmanCv {
     }
 }
 
-/// Alpha-beta filter. After an update the covariance is `P_pos = α·R`,
-/// `P_vel = (β/dt)²·R` with zero cross terms, where `dt` is the track's
+/// Alpha-beta filter. Its covariance is approximate: after an update each
+/// block is the steady-state value `P_pos = α·R`, `P_vel = (β/dt)²·R`, or,
+/// while the start-up transient dominates, the predicted block scaled by
+/// `ρ²`, whichever has the larger trace. `ρ` is the spectral radius of the
+/// closed loop `λ² − (2 − α − β)·λ + (1 − α) = 0`, the rate at which
+/// estimate errors decay. Cross terms are zero; `dt` is the track's
 /// [`TrackState::elapsed`] (1 s if that is not finite and positive). Radial
 /// velocity is ignored.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -254,6 +266,22 @@ pub struct AlphaBeta {
     pub alpha: f64,
     /// Velocity gain, in `(0, 2)`.
     pub beta: f64,
+}
+
+impl AlphaBeta {
+    /// Per-update variance decay `ρ²` of the error dynamics (at most 1).
+    fn transient_decay(&self) -> f64 {
+        let a = 2.0 - self.alpha - self.beta;
+        let c = 1.0 - self.alpha;
+        let disc = a * a - 4.0 * c;
+        let rho2 = if disc < 0.0 {
+            c
+        } else {
+            let rho = ((a.abs() + disc.sqrt()) / 2.0).max(0.0);
+            rho * rho
+        };
+        rho2.clamp(0.0, 1.0)
+    }
 }
 
 impl Tracker for AlphaBeta {
@@ -290,13 +318,30 @@ impl Tracker for AlphaBeta {
         let g = self.beta / dt;
         let resid = [z.x - s.x[0], z.y - s.x[1], z.z - s.x[2]];
         let mut next = s.clone();
+        for (i, e) in resid.iter().enumerate() {
+            next.x[i] += self.alpha * e;
+            next.x[i + 3] += g * e;
+        }
+        // Per block: steady state, or the decaying predicted uncertainty
+        // while it is larger (so a fresh track's gate follows convergence).
+        let trace = |m: &[[f64; 3]; 3]| m[0][0] + m[1][1] + m[2][2];
+        let scaled = |m: [[f64; 3]; 3], k: f64| m.map(|row| row.map(|v| v * k));
+        let block = |steady: [[f64; 3]; 3], predicted: [[f64; 3]; 3], decay: f64| {
+            let transient = scaled(predicted, decay);
+            if trace(&transient) > trace(&steady) {
+                transient
+            } else {
+                steady
+            }
+        };
+        let decay = self.transient_decay();
+        let pos = block(scaled(r, self.alpha), s.p.position(), decay);
+        let vel = block(scaled(r, g * g), s.p.velocity(), decay);
         let mut p = [[0.0; 6]; 6];
         for i in 0..3 {
-            next.x[i] += self.alpha * resid[i];
-            next.x[i + 3] += g * resid[i];
             for j in 0..3 {
-                p[i][j] = self.alpha * r[i][j];
-                p[i + 3][j + 3] = g * g * r[i][j];
+                p[i][j] = pos[i][j];
+                p[i + 3][j + 3] = vel[i][j];
             }
         }
         next.p = Covariance6(p);
@@ -391,7 +436,7 @@ mod tests {
             if let Some(sig) = radial_sigma {
                 let u = (truth - SENSOR).normalized().unwrap();
                 let rv = TRUTH_V.dot(u) + sig * standard_normal(&mut r);
-                s = tracker.update_radial_velocity(&s, rv, sig, SENSOR);
+                s = tracker.update_radial_velocity(&s, rv, sig, SENSOR, Vector3::ZERO);
             }
             traces.push(trace(s.p.position()));
         }
@@ -441,14 +486,59 @@ mod tests {
             process_accel_sigma: 0.1,
         };
         let s = initial(SENSOR);
-        assert_eq!(kf.update_radial_velocity(&s, 5.0, 0.5, SENSOR), s);
+        assert_eq!(
+            kf.update_radial_velocity(&s, 5.0, 0.5, SENSOR, Vector3::ZERO),
+            s
+        );
         let s = initial(START);
-        assert_eq!(kf.update_radial_velocity(&s, f64::NAN, 0.5, SENSOR), s);
+        assert_eq!(
+            kf.update_radial_velocity(&s, f64::NAN, 0.5, SENSOR, Vector3::ZERO),
+            s
+        );
         assert_eq!(
             kf.update_position(&s, START, [[f64::NAN; 3]; 3]),
             s,
             "singular innovation covariance skips the update"
         );
+    }
+
+    #[test]
+    fn radial_velocity_compensates_sensor_motion() {
+        let kf = KalmanCv {
+            process_accel_sigma: 0.1,
+        };
+        let sensor_vel = Vector3::new(0.0, 50.0, 0.0);
+        let s = TrackState::new(
+            [START.x, START.y, START.z, TRUTH_V.x, TRUTH_V.y, TRUTH_V.z],
+            initial(START).p,
+        );
+        let u = (START - SENSOR).normalized().unwrap();
+        let rv = (TRUTH_V - sensor_vel).dot(u);
+        let next = kf.update_radial_velocity(&s, rv, 0.5, SENSOR, sensor_vel);
+        // A perfect relative radial velocity has zero innovation.
+        for (a, b) in next.x.iter().zip(&s.x) {
+            assert!((a - b).abs() < 1e-9, "{:?} vs {:?}", next.x, s.x);
+        }
+        assert!(next.p.velocity()[1][1] < s.p.velocity()[1][1]);
+        // Ignoring the sensor motion would pull the velocity.
+        let biased = kf.update_radial_velocity(&s, rv, 0.5, SENSOR, Vector3::ZERO);
+        assert!((biased.x[4] - s.x[4]).abs() > 1.0);
+    }
+
+    #[test]
+    fn alpha_beta_covariance_follows_startup() {
+        let ab = AlphaBeta {
+            alpha: 0.5,
+            beta: 0.3,
+        };
+        // Complex poles: ρ² = 1 − α = 0.5. A fresh track's 300 m/s
+        // velocity sigma decays by ρ² instead of collapsing.
+        assert!((ab.transient_decay() - 0.5).abs() < 1e-12);
+        let s = ab.predict(&initial(START), 4.0);
+        let u = ab.update_position(&s, START, diag(25.0));
+        let want = 0.5 * s.p.get(3, 3);
+        assert!((u.p.get(3, 3) - want).abs() < 1e-6 * want);
+        assert!(u.p.get(3, 3) > (0.3 / 4.0_f64).powi(2) * 25.0);
     }
 
     #[test]
@@ -469,7 +559,10 @@ mod tests {
         assert!((s.p.get(3, 3) - 0.0025 * 25.0).abs() < 1e-12);
         assert_eq!(s.p.get(0, 3), 0.0);
         // Radial update is a no-op.
-        assert_eq!(ab.update_radial_velocity(&s, 3.0, 0.5, SENSOR), s);
+        assert_eq!(
+            ab.update_radial_velocity(&s, 3.0, 0.5, SENSOR, Vector3::ZERO),
+            s
+        );
     }
 
     #[test]
@@ -537,7 +630,7 @@ mod tests {
         let s = kf.predict(&initial(START), 2.0);
         assert_eq!(s.elapsed, 2.0);
         assert_eq!(kf.update_position(&s, START, diag(25.0)).elapsed, 0.0);
-        let rv = kf.update_radial_velocity(&s, 1.0, 0.5, SENSOR);
+        let rv = kf.update_radial_velocity(&s, 1.0, 0.5, SENSOR, Vector3::ZERO);
         assert_eq!(rv.elapsed, 0.0);
         assert_eq!(kf.predict(&s, 0.0), s);
         assert_eq!(kf.predict(&s, -1.0), s);

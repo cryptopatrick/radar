@@ -555,7 +555,7 @@ impl RadarConfig {
     /// target at 50 km has Pd 0.9 at Pfa 1e-6, 150 m range resolution,
     /// limits 500 m..100 km, SNR-scaled noise (floors 5 m, 0.05°, 0.05°,
     /// 0.5 m/s; 1 m/s velocity resolution), doppler on, Kalman tracking
-    /// (process noise 5 m/s²).
+    /// (process noise 1 m/s², for non-manoeuvring targets).
     pub fn surveillance_2d() -> Result<RadarConfig, RadarError> {
         Self::surveillance_builder()?.build()
     }
@@ -613,7 +613,7 @@ impl RadarConfig {
             .doppler(true);
         #[cfg(feature = "tracking")]
         let b = b.tracker(TrackerConfig::Kalman {
-            process_accel_sigma: 5.0,
+            process_accel_sigma: 1.0,
         });
         Ok(b)
     }

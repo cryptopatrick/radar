@@ -25,11 +25,16 @@ fn target(pos: Vector3, velocity: Vector3) -> TargetState {
 }
 
 fn world(time: SimTime, targets: Vec<TargetState>) -> WorldSnapshot {
+    moving_world(time, Vector3::ZERO, targets)
+}
+
+/// A world whose radar platform starts at the origin moving at `velocity`.
+fn moving_world(time: SimTime, velocity: Vector3, targets: Vec<TargetState>) -> WorldSnapshot {
     let mut w = WorldSnapshot::new(time);
     w.platforms = vec![PlatformState {
         id: OWN,
         pose: Pose3::IDENTITY,
-        velocity: Vector3::ZERO,
+        velocity,
     }];
     w.targets = targets;
     w
@@ -197,8 +202,9 @@ fn not_penalised_outside_beam() {
     let az = 10f64.to_radians();
     let pos = Vector3::new(10_000.0 * az.sin(), 10_000.0 * az.cos(), 0.0);
     let mut sim = sim_with(cfg, vec![target(pos, Vector3::ZERO)]);
-    // Out at 0.1–0.2 s, back at 3.9–4.0 s, out again at 4.1–4.2 s.
-    run(&mut sim, 42, &OpenSky);
+    // Dwells (one outcome each): 0.1–0.2 s, 3.9–4.2 s (reversal at 0°),
+    // 7.8–8.2 s → confirmed on the third.
+    run(&mut sim, 82, &OpenSky);
     let c = confirmed(&sim);
     assert_eq!(c.len(), 1, "{c:?}");
     assert_eq!(c[0].consecutive_misses, 0);
@@ -261,4 +267,128 @@ fn no_tracker_no_tracks() {
     )));
     assert!(sim.tracks(RADAR).unwrap().is_empty());
     assert!(sim.tracks(SensorId(99)).is_err());
+}
+
+#[test]
+fn overlap_does_not_cause_misses() {
+    // Sweeps end every 9°; a target at 9° is looked at by two consecutive
+    // updates every revolution (one dwell).
+    let az = 9f64.to_radians();
+    let pos = Vector3::new(20_000.0 * az.sin(), 20_000.0 * az.cos(), 0.0);
+    let mut sim = sim_with(
+        RadarConfig::surveillance_2d().unwrap(),
+        vec![target(pos, Vector3::ZERO)],
+    );
+    let warmup = run(&mut sim, 100, &OpenSky);
+    let obs = run(&mut sim, 200, &OpenSky);
+    let looks = warmup
+        .iter()
+        .chain(&obs)
+        .filter(|o| matches!(o, Observation::Measurement(_)))
+        .count();
+    assert!(looks > 10, "doubly illuminated: {looks} looks in 7.5 turns");
+    let c = confirmed(&sim);
+    assert_eq!(c.len(), 1, "{c:?}");
+    assert_eq!(c[0].consecutive_misses, 0);
+    // The target's track never misses or coasts (other tracks, from false
+    // alarms or an occasional ungated second look, are not checked).
+    let id = c[0].id;
+    let ours: Vec<&Track> = obs
+        .iter()
+        .filter_map(|o| match o {
+            Observation::TrackUpdated(t) if t.id == id => Some(t),
+            _ => None,
+        })
+        .collect();
+    assert!(ours.len() >= 4, "{ours:?}");
+    assert!(
+        ours.iter()
+            .all(|t| t.consecutive_misses == 0 && t.status == TrackStatus::Confirmed),
+        "{ours:?}"
+    );
+    // One hit per dwell: 8 dwells in 30 s (the first at t = 0.1 s).
+    assert!(c[0].hits <= 8, "hits {}", c[0].hits);
+}
+
+#[test]
+fn alpha_beta_surveillance_holds_one_track() {
+    let mut cfg = RadarConfig::surveillance_2d().unwrap();
+    cfg.tracker = TrackerConfig::AlphaBeta {
+        alpha: 0.5,
+        beta: 0.3,
+    };
+    let mut sim = sim_with(cfg, vec![eastbound()]);
+    run(&mut sim, 600, &OpenSky);
+    let c = confirmed(&sim);
+    assert_eq!(c.len(), 1, "{c:?}");
+    assert_eq!(c[0].id, TrackId(1));
+}
+
+#[test]
+fn moving_platform_doppler_unbiased() {
+    let mut sim = Simulation::new(SimulationConfig::default());
+    sim.add_radar(
+        RADAR,
+        OWN,
+        Pose3::IDENTITY,
+        RadarConfig::surveillance_2d().unwrap(),
+    )
+    .unwrap();
+    sim.update_world(moving_world(
+        SimTime::ZERO,
+        Vector3::new(0.0, 50.0, 0.0),
+        vec![eastbound()],
+    ))
+    .unwrap();
+    let obs = run(&mut sim, 600, &OpenSky);
+    let rv: Vec<f64> = obs
+        .iter()
+        .filter_map(|o| match o {
+            Observation::Measurement(m) => m.radial_velocity,
+            _ => None,
+        })
+        .collect();
+    assert!(!rv.is_empty());
+    let c = confirmed(&sim);
+    assert_eq!(c.len(), 1, "{c:?}");
+    let t = &c[0];
+    assert!(
+        (t.course() - FRAC_PI_2).abs() < 5f64.to_radians(),
+        "course {}",
+        t.course().to_degrees()
+    );
+    assert!((t.speed() - 100.0).abs() < 10.0, "speed {}", t.speed());
+    assert!(t.velocity.y.abs() < 10.0, "vy {}", t.velocity.y);
+}
+
+#[test]
+fn noise_free_3d_keeps_one_track() {
+    let cfg = RadarConfig::builder()
+        .dimension(Dimension::ThreeD)
+        .detection(DetectionConfig::Radius {
+            range: 20_000.0,
+            pd: 1.0,
+            false_alarms_per_scan: 0.0,
+        })
+        // Long enough that the default sigma limit (2 km) keeps a fresh
+        // tentative track through the 1 s revisit.
+        .limits(RangeLimits {
+            min_range: 0.0,
+            instrumented_range: 20_000.0,
+        })
+        .tracker(TrackerConfig::Kalman {
+            process_accel_sigma: 0.0,
+        })
+        .build()
+        .unwrap();
+    let mut sim = sim_with(
+        cfg,
+        vec![target(Vector3::new(500.0, 500.0, 0.0), Vector3::ZERO)],
+    );
+    run(&mut sim, 200, &OpenSky);
+    let ts = sim.tracks(RADAR).unwrap();
+    assert_eq!(ts.len(), 1, "{ts:?}");
+    assert_eq!(ts[0].id, TrackId(1));
+    assert_eq!(ts[0].status, TrackStatus::Confirmed);
+    assert!(ts[0].hits >= 19, "hits {}", ts[0].hits);
 }

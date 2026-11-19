@@ -5,8 +5,8 @@ mod manager;
 mod matrix;
 
 pub use filter::{AlphaBeta, Covariance6, KalmanCv, TrackState, Tracker};
+pub(crate) use manager::{BeamMotion, TrackManager, with_tracker};
 pub use manager::{Track, TrackStatus};
-pub(crate) use manager::{TrackManager, with_tracker};
 
 /// Which tracking filter a radar runs.
 #[derive(Debug)]

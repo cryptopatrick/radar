@@ -5,6 +5,16 @@ use crate::geometry::direction;
 use crate::radar::measurement::MeasurementSigma;
 
 const SENSOR: SensorId = SensorId(3);
+/// Every update its own dwell (Fixed/Steered behaviour).
+const STEPPED: BeamMotion = BeamMotion {
+    sweeping: false,
+    swept: 0.0,
+};
+/// A sweeping scan moving 9° per update.
+const SWEEP: BeamMotion = BeamMotion {
+    sweeping: true,
+    swept: 0.157,
+};
 
 fn meas(range: f64, az: f64, el: Option<f64>) -> Measurement {
     Measurement {
@@ -23,6 +33,7 @@ fn meas(range: f64, az: f64, el: Option<f64>) -> Measurement {
         },
         identity: None,
         sensor_position: Vector3::new(100.0, -50.0, 20.0),
+        sensor_velocity: Vector3::ZERO,
     }
 }
 
@@ -155,6 +166,7 @@ fn identity_majority_tie_smallest() {
         mgr.update(
             &kalman(),
             at(k as u64),
+            STEPPED,
             std::slice::from_ref(&m),
             |_| true,
             &mut out,
@@ -175,6 +187,7 @@ fn m_of_n_confirms_and_tentative_dies() {
         mgr.update(
             &kalman(),
             at(k),
+            STEPPED,
             std::slice::from_ref(&m),
             |_| true,
             &mut out,
@@ -192,16 +205,17 @@ fn m_of_n_confirms_and_tentative_dies() {
     mgr.update(
         &kalman(),
         at(0),
+        STEPPED,
         std::slice::from_ref(&m),
         |_| true,
         &mut out,
     );
     for k in 1..4 {
-        mgr.update(&kalman(), at(k), &[], |_| true, &mut out);
+        mgr.update(&kalman(), at(k), STEPPED, &[], |_| true, &mut out);
         assert_eq!(mgr.tracks()[0].status, TrackStatus::Tentative);
     }
     out.clear();
-    mgr.update(&kalman(), at(4), &[], |_| true, &mut out);
+    mgr.update(&kalman(), at(4), STEPPED, &[], |_| true, &mut out);
     assert!(mgr.tracks().is_empty());
     assert!(matches!(&out[0], Observation::TrackUpdated(t) if t.status == TrackStatus::Deleted));
     assert!(matches!(
@@ -218,13 +232,14 @@ fn uncovered_tracks_are_not_missed() {
     mgr.update(
         &kalman(),
         at(0),
+        STEPPED,
         std::slice::from_ref(&m),
         |_| true,
         &mut out,
     );
     out.clear();
     for k in 1..10 {
-        mgr.update(&kalman(), at(k), &[], |_| false, &mut out);
+        mgr.update(&kalman(), at(k), STEPPED, &[], |_| false, &mut out);
     }
     assert!(out.is_empty());
     let t = &mgr.tracks()[0];
@@ -241,6 +256,7 @@ fn greedy_assignment_and_ids() {
     mgr.update(
         &kalman(),
         at(0),
+        STEPPED,
         &[a.clone(), b.clone()],
         |_| true,
         &mut out,
@@ -250,7 +266,14 @@ fn greedy_assignment_and_ids() {
     // Next update, measurements in the other order: each still goes to its
     // own track and no new track starts.
     out.clear();
-    mgr.update(&kalman(), at(1), &[b, a.clone()], |_| true, &mut out);
+    mgr.update(
+        &kalman(),
+        at(1),
+        STEPPED,
+        &[b, a.clone()],
+        |_| true,
+        &mut out,
+    );
     let ts = updates(&out);
     assert_eq!(ts.len(), 2);
     assert!(ts.iter().all(|t| t.hits == 2));
@@ -261,6 +284,7 @@ fn greedy_assignment_and_ids() {
     mgr.update(
         &kalman(),
         at(2),
+        STEPPED,
         &[meas(50_000.0, 3.0, None)],
         |_| false,
         &mut out,
@@ -270,6 +294,7 @@ fn greedy_assignment_and_ids() {
     mgr.update(
         &kalman(),
         at(3),
+        STEPPED,
         std::slice::from_ref(&a),
         |_| true,
         &mut out,
@@ -286,6 +311,7 @@ fn two_d_tracks_pin_vertical() {
         mgr.update(
             &kalman(),
             at(k),
+            STEPPED,
             std::slice::from_ref(&m),
             |_| true,
             &mut out,
@@ -309,13 +335,14 @@ fn position_sigma_limit_deletes() {
     mgr.update(
         &kalman(),
         at(0),
+        STEPPED,
         &[meas(1000.0, 1.0, None)],
         |_| true,
         &mut out,
     );
     out.clear();
     // 300 m/s velocity sigma: after 2 s the predicted sigma exceeds 500 m.
-    mgr.update(&kalman(), at(2), &[], |_| false, &mut out);
+    mgr.update(&kalman(), at(2), STEPPED, &[], |_| false, &mut out);
     assert!(mgr.tracks().is_empty());
     assert_eq!(out.len(), 1);
     assert!(matches!(
@@ -334,5 +361,150 @@ fn with_tracker_selects_filter() {
     assert_eq!(
         with_tracker(&ab, |t| format!("{t:?}")).unwrap(),
         "AlphaBeta { alpha: 0.5, beta: 0.1 }"
+    );
+}
+
+#[test]
+fn dwell_absorbs_second_look_and_misses_once() {
+    let mut mgr = manager(Dimension::TwoD);
+    let mut out = Vec::new();
+    let m = meas(1000.0, 1.0, None);
+    let one = std::slice::from_ref(&m);
+    // Dwell 1: two consecutive looks, both detected → one hit, no new track.
+    mgr.update(&kalman(), at(0), SWEEP, one, |_| true, &mut out);
+    out.clear();
+    mgr.update(&kalman(), at(1), SWEEP, one, |_| true, &mut out);
+    assert!(out.is_empty(), "absorbed: {out:?}");
+    let t = &mgr.tracks()[0];
+    assert_eq!((mgr.tracks().len(), t.hits, t.last_update), (1, 1, at(0)));
+    // Beam leaves: the dwell ended with a hit, so no miss.
+    mgr.update(&kalman(), at(2), SWEEP, &[], |_| false, &mut out);
+    assert!(out.is_empty());
+    // Dwell 2: two covered looks with no detection → one miss, at dwell end.
+    mgr.update(&kalman(), at(3), SWEEP, &[], |_| true, &mut out);
+    mgr.update(&kalman(), at(4), SWEEP, &[], |_| true, &mut out);
+    assert!(out.is_empty());
+    mgr.update(&kalman(), at(5), SWEEP, &[], |_| false, &mut out);
+    let ts = updates(&out);
+    assert_eq!(ts.len(), 1);
+    assert_eq!(ts[0].consecutive_misses, 1);
+    // Dwell 3: miss on the first look, hit on the second → a hit.
+    out.clear();
+    mgr.update(&kalman(), at(6), SWEEP, &[], |_| true, &mut out);
+    mgr.update(&kalman(), at(7), SWEEP, one, |_| true, &mut out);
+    let t = &updates(&out)[0];
+    assert_eq!((t.hits, t.consecutive_misses), (2, 0));
+}
+
+#[test]
+fn dwell_ends_after_half_turn() {
+    let mut mgr = manager(Dimension::TwoD);
+    let mut out = Vec::new();
+    let half = BeamMotion {
+        sweeping: true,
+        swept: 2.0,
+    };
+    mgr.update(
+        &kalman(),
+        at(0),
+        half,
+        &[meas(1000.0, 1.0, None)],
+        |_| true,
+        &mut out,
+    );
+    out.clear();
+    // Covered throughout. Dwell 1 (hit) has swept 4 rad ≥ π by t = 2, so it
+    // ends there; dwell 2 (t = 2, 3) ends at t = 4 without a hit: one miss.
+    for k in 1..4 {
+        mgr.update(&kalman(), at(k), half, &[], |_| true, &mut out);
+    }
+    assert!(out.is_empty(), "{out:?}");
+    mgr.update(&kalman(), at(4), half, &[], |_| true, &mut out);
+    assert_eq!(updates(&out)[0].consecutive_misses, 1);
+}
+
+/// A filter whose position update is always skipped.
+#[derive(Debug)]
+struct Skipping(KalmanCv);
+impl Tracker for Skipping {
+    fn predict(&self, s: &TrackState, dt: f64) -> TrackState {
+        self.0.predict(s, dt)
+    }
+    fn update_position(&self, s: &TrackState, _z: Vector3, _r: [[f64; 3]; 3]) -> TrackState {
+        s.clone()
+    }
+}
+
+#[test]
+fn skipped_update_keeps_last_hit_state() {
+    let ab = AlphaBeta {
+        alpha: 0.5,
+        beta: 0.3,
+    };
+    let mut mgr = manager(Dimension::TwoD);
+    let mut out = Vec::new();
+    let m = meas(1000.0, 1.0, None);
+    mgr.update(
+        &ab,
+        at(0),
+        STEPPED,
+        std::slice::from_ref(&m),
+        |_| true,
+        &mut out,
+    );
+    let before = mgr.tracks()[0].clone();
+    let skip = Skipping(kalman());
+    mgr.update(
+        &skip,
+        at(2),
+        STEPPED,
+        std::slice::from_ref(&m),
+        |_| true,
+        &mut out,
+    );
+    let after = &mgr.tracks()[0];
+    assert_eq!(after.hits, 2);
+    assert_eq!(after.last_update, before.last_update);
+    assert_eq!(after.position, before.position);
+    assert_eq!(after.covariance, before.covariance);
+    // Elapsed restarts from the original last hit: one 3 s predict.
+    assert_eq!(mgr.tracks[0].state.elapsed, 0.0);
+    mgr.update(
+        &ab,
+        at(3),
+        STEPPED,
+        std::slice::from_ref(&m),
+        |_| true,
+        &mut out,
+    );
+    assert_eq!(mgr.tracks()[0].last_update, at(3));
+}
+
+#[test]
+fn distance_rejects_degenerate_covariance() {
+    let mgr = manager(Dimension::ThreeD);
+    let s = TrackState::new([0.0; 6], Covariance6::new([[0.0; 6]; 6]));
+    assert_eq!(
+        mgr.distance2(&s, Vector3::new(1.0, 0.0, 0.0), &[[0.0; 3]; 3]),
+        None
+    );
+    // Tiny but well-conditioned covariances still gate.
+    let mut p = [[0.0; 6]; 6];
+    for (i, row) in p.iter_mut().enumerate().take(3) {
+        row[i] = 1e-8;
+    }
+    let s = TrackState::new([0.0; 6], Covariance6::new(p));
+    let r = [[1e-8, 0.0, 0.0], [0.0, 1e-8, 0.0], [0.0, 0.0, 1e-8]];
+    let d2 = mgr.distance2(&s, Vector3::new(1e-4, 0.0, 0.0), &r).unwrap();
+    assert!((d2 - 0.5).abs() < 1e-9);
+    // A non-positive-definite innovation giving d² < 0 is rejected.
+    let mgr2 = manager(Dimension::TwoD);
+    let mut q = [[0.0; 6]; 6];
+    q[0][0] = -1.0;
+    q[1][1] = 1.0;
+    let s = TrackState::new([0.0; 6], Covariance6::new(q));
+    assert_eq!(
+        mgr2.distance2(&s, Vector3::new(1.0, 0.0, 0.0), &[[0.0; 3]; 3]),
+        None
     );
 }
