@@ -132,8 +132,8 @@ impl ScanConfig {
 
     /// Nominal time (s) between looks at a given direction: Circular
     /// `2π/rate`; Volume `bars·2π/rate`; Sector `2·width/rate`; Raster
-    /// `2·rows·span/rate` (approximate); Fixed, Steered and Custom
-    /// `update_period`. A non-finite or non-positive result falls back to
+    /// `2·rows·span/rate` (approximate); Steered `2π/max_slew_rate` (the
+    /// fastest full circle); Fixed and Custom `update_period`. A non-finite or non-positive result falls back to
     /// `update_period`.
     #[cfg_attr(not(feature = "tracking"), allow(dead_code))]
     pub(crate) fn nominal_revisit(&self, update_period: SimDuration) -> f64 {
@@ -151,7 +151,8 @@ impl ScanConfig {
                 rate,
                 ..
             } => 2.0 * f64::from(*rows) * azimuth_span / rate,
-            ScanConfig::Fixed { .. } | ScanConfig::Steered { .. } | ScanConfig::Custom(_) => period,
+            ScanConfig::Steered { max_slew_rate } => TAU / max_slew_rate,
+            ScanConfig::Fixed { .. } | ScanConfig::Custom(_) => period,
         };
         if revisit.is_finite() && revisit > 0.0 {
             revisit
@@ -830,8 +831,10 @@ mod tests {
             elevation: 0.0,
         };
         assert!(close(fixed.nominal_revisit(p), 0.1));
-        let steered = ScanConfig::Steered { max_slew_rate: 1.0 };
-        assert!(close(steered.nominal_revisit(p), 0.1));
+        let steered = ScanConfig::Steered { max_slew_rate: PI };
+        assert!(close(steered.nominal_revisit(p), 2.0));
+        let frozen = ScanConfig::Steered { max_slew_rate: 0.0 };
+        assert!(close(frozen.nominal_revisit(p), 0.1));
         let custom = ScanConfig::Custom(Box::new(Stuck));
         assert!(close(custom.nominal_revisit(p), 0.1));
         // Degenerate values fall back to the update period.

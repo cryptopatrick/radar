@@ -255,8 +255,9 @@ pub(crate) struct TrackManager {
 impl TrackManager {
     /// Creates an empty manager. `instrumented_range` sets the default
     /// position-sigma limit (a tenth of it); a tentative track is deleted
-    /// once more than `(confirm_n + 1) × nominal_revisit` seconds pass since
-    /// its last hit.
+    /// once more than `tentative_max_age` (default
+    /// `(confirm_n + 1) × nominal_revisit` seconds) passes since its last
+    /// hit.
     pub(crate) fn new(
         mgmt: &TrackManagementConfig,
         dim: Dimension,
@@ -271,7 +272,10 @@ impl TrackManager {
             mgmt: mgmt.clone(),
             gate: chi2_gate(mgmt.gate_probability, dof),
             max_position_sigma: mgmt.max_position_sigma.unwrap_or(instrumented_range / 10.0),
-            tentative_max_age: f64::from(mgmt.confirm_n.saturating_add(1)) * nominal_revisit,
+            tentative_max_age: mgmt.tentative_max_age.map_or_else(
+                || f64::from(mgmt.confirm_n.saturating_add(1)) * nominal_revisit,
+                |d| d.as_secs_f64(),
+            ),
             next_id: 1,
             tracks: Vec::new(),
         }

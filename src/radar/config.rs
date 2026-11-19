@@ -468,6 +468,13 @@ impl RadarConfig {
                 "must be finite and > 0",
             )?;
         }
+        if let Some(age) = m.tentative_max_age {
+            check(
+                !age.is_zero(),
+                "track_management.tentative_max_age",
+                "must be > 0",
+            )?;
+        }
         Ok(())
     }
 
@@ -951,6 +958,13 @@ mod tests {
             field_of(b().track_management(m).build()),
             "track_management.gate_probability"
         );
+        let m = mgmt(|m| m.tentative_max_age = Some(SimDuration::ZERO));
+        assert_eq!(
+            field_of(b().track_management(m).build()),
+            "track_management.tentative_max_age"
+        );
+        let m = mgmt(|m| m.tentative_max_age = Some(SimDuration::from_millis(1)));
+        assert!(b().track_management(m).build().is_ok());
     }
 
     #[cfg(feature = "ew")]

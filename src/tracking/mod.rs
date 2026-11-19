@@ -4,6 +4,8 @@ mod filter;
 mod manager;
 mod matrix;
 
+use crate::time::SimDuration;
+
 pub use filter::{AlphaBeta, Covariance6, KalmanCv, TrackState, Tracker};
 pub(crate) use manager::{BeamMotion, TrackManager, with_tracker};
 pub use manager::{Track, TrackStatus};
@@ -67,16 +69,24 @@ pub struct TrackManagementConfig {
     /// Position sigma above which a Confirmed or Coasting track is deleted,
     /// m; `None` means `instrumented_range / 10`. Tentative tracks are not
     /// subject to it (their fresh velocity uncertainty would exceed it before
-    /// a second look on short-range radars): M-of-N governs them, and a
-    /// tentative track unhit for more than `(confirm_n + 1)` nominal scan
-    /// revisits is deleted. Any track with a non-finite covariance is
-    /// deleted.
+    /// a second look on short-range radars): M-of-N and
+    /// [`tentative_max_age`](Self::tentative_max_age) govern them. Any track
+    /// with a non-finite covariance is deleted.
     pub max_position_sigma: Option<f64>,
+    /// Time since its last hit after which a Tentative track is deleted
+    /// (it is deleted once strictly older). `None` means
+    /// `(confirm_n + 1) ×` the scan's nominal revisit: one turn for Circular,
+    /// all bars for Volume, out and back for Sector and Raster, a full circle
+    /// at `max_slew_rate` for Steered, and `update_period` for Fixed and
+    /// Custom. Set it explicitly when the real revisit differs, e.g. a
+    /// Steered beam commanded to spin slower than its slew limit. Must be
+    /// > 0 when set.
+    pub tentative_max_age: Option<SimDuration>,
 }
 
 impl Default for TrackManagementConfig {
     /// 3-of-5 confirmation, 5 coasts, 99 % gate, 300 m/s initial velocity
-    /// sigma, automatic position-sigma limit.
+    /// sigma, automatic position-sigma limit and tentative max age.
     fn default() -> Self {
         Self {
             confirm_m: 3,
@@ -85,6 +95,7 @@ impl Default for TrackManagementConfig {
             gate_probability: 0.99,
             initial_velocity_sigma: 300.0,
             max_position_sigma: None,
+            tentative_max_age: None,
         }
     }
 }

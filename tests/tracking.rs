@@ -412,12 +412,10 @@ fn simple_2d_short_range_confirms() {
     assert_eq!(c[0].id, TrackId(1));
 }
 
-#[test]
-fn steered_away_tentative_ages_out() {
-    let cfg = RadarConfig::builder()
-        .scan(ScanConfig::Steered {
-            max_slew_rate: std::f64::consts::PI,
-        })
+/// A noise-free Steered radius radar (2 km) with a Kalman tracker.
+fn steered(max_slew_rate: f64, mgmt: TrackManagementConfig) -> RadarConfig {
+    RadarConfig::builder()
+        .scan(ScanConfig::Steered { max_slew_rate })
         .detection(DetectionConfig::Radius {
             range: 2_000.0,
             pd: 1.0,
@@ -430,11 +428,27 @@ fn steered_away_tentative_ages_out() {
         .tracker(TrackerConfig::Kalman {
             process_accel_sigma: 1.0,
         })
+        .track_management(mgmt)
         .build()
-        .unwrap();
-    let n = TrackManagementConfig::default().confirm_n as usize;
+        .unwrap()
+}
+
+fn deleted_ids(obs: &[Observation]) -> Vec<TrackId> {
+    obs.iter()
+        .filter_map(|o| match o {
+            Observation::TrackDeleted { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn steered_away_tentative_ages_out() {
+    // π rad/s: nominal revisit 2 s, so the default max age is (N + 1)·2 s.
+    let mgmt = TrackManagementConfig::default();
+    let quiet_updates = (mgmt.confirm_n as usize + 1) * 20;
     let mut sim = sim_with(
-        cfg,
+        steered(std::f64::consts::PI, mgmt),
         vec![target(Vector3::new(0.0, 1000.0, 0.0), Vector3::ZERO)],
     );
     // The beam starts on the target and slews away (18° per update) to a
@@ -446,8 +460,8 @@ fn steered_away_tentative_ages_out() {
             |o| matches!(o, Observation::TrackUpdated(t) if t.status == TrackStatus::Tentative)
         )
     );
-    // Not deleted while (time − last hit) ≤ (N + 1) revisits (0.1 s each)…
-    let quiet = run(&mut sim, n + 1, &OpenSky);
+    // Not deleted while (time − last hit) ≤ max age…
+    let quiet = run(&mut sim, quiet_updates, &OpenSky);
     assert!(quiet.is_empty(), "{quiet:?}");
     assert_eq!(sim.tracks(RADAR).unwrap().len(), 1);
     // …and deleted on the next update, with no miss recorded.
@@ -461,4 +475,63 @@ fn steered_away_tentative_ages_out() {
         }]
     );
     assert!(sim.tracks(RADAR).unwrap().is_empty());
+}
+
+/// Spins a steered beam +45° per update (one look every 8 updates) for `n`
+/// updates and returns everything observed.
+fn spin(sim: &mut Simulation, n: usize) -> Vec<Observation> {
+    let mut out = Vec::new();
+    for _ in 0..n {
+        let az = sim.sensor_status(RADAR).unwrap().boresight_azimuth;
+        sim.command_beam(RADAR, az + 45f64.to_radians(), 0.0)
+            .unwrap();
+        out.extend(run(sim, 1, &OpenSky));
+    }
+    out
+}
+
+/// Target at bearing 100°, inside the third 45° step of each turn.
+fn spin_target() -> TargetState {
+    let az = 100f64.to_radians();
+    target(
+        Vector3::new(1000.0 * az.sin(), 1000.0 * az.cos(), 0.0),
+        Vector3::ZERO,
+    )
+}
+
+#[test]
+fn steered_slow_spin_confirms() {
+    // Slew limit 75° per 100 ms update; commanded at 45° per update.
+    let rate = 75f64.to_radians() / 0.1;
+    let mut sim = sim_with(
+        steered(rate, TrackManagementConfig::default()),
+        vec![spin_target()],
+    );
+    let obs = spin(&mut sim, 40);
+    let looks = obs
+        .iter()
+        .filter(|o| matches!(o, Observation::Measurement(_)))
+        .count();
+    assert_eq!(looks, 5, "one look per 8-update turn");
+    assert!(deleted_ids(&obs).is_empty(), "{obs:?}");
+    let c = confirmed(&sim);
+    assert_eq!(c.len(), 1, "{:?}", sim.tracks(RADAR).unwrap());
+    assert_eq!(c[0].id, TrackId(1));
+}
+
+#[test]
+fn tentative_max_age_override() {
+    let rate = 75f64.to_radians() / 0.1;
+    let mgmt = TrackManagementConfig {
+        tentative_max_age: Some(SimDuration::from_millis(300)),
+        ..TrackManagementConfig::default()
+    };
+    let mut sim = sim_with(steered(rate, mgmt), vec![spin_target()]);
+    // Revisit (0.8 s) exceeds the 0.3 s max age: each look starts a new
+    // tentative track that is deleted before the next.
+    let obs = spin(&mut sim, 40);
+    let deleted = deleted_ids(&obs);
+    assert!(deleted.len() >= 4, "{deleted:?}");
+    assert_eq!(deleted[0], TrackId(1));
+    assert!(confirmed(&sim).is_empty());
 }
