@@ -31,7 +31,7 @@ pub mod prelude {
         BeamPattern, Calibration, DetectionConfig, DetectionContext, DetectionModel,
         DetectionResult, Dimension, IdentificationConfig, Measurement, MeasurementConfig,
         MeasurementSigma, RadarConfig, RangeEquationDetector, RangeLimits, ScanConfig, ScanFrame,
-        analytic_pd,
+        analytic_pd, resolution_cells,
     };
     pub use crate::random::{ChaChaStream, RandomSource, RandomSourceFactory, Seed, StreamId};
     pub use crate::sensor::{Observation, SensorContext, SensorModel};

@@ -71,3 +71,59 @@ fn false_alarm_rate_matches_pfa() {
         "false-alarm rate {got}, expected {PFA}"
     );
 }
+
+#[test]
+fn pipeline_false_alarm_rate_matches_pfa_times_cells() {
+    // A surveillance radar in an empty world: every measurement is a false
+    // alarm. Per update the count is Poisson(pfa · cells), so the mean over
+    // `UPDATES` updates has standard deviation √(pfa · cells / UPDATES).
+    const UPDATES: u32 = 5_000;
+    let mut cfg = RadarConfig::surveillance_2d().unwrap();
+    let pfa = 1e-4;
+    let resolution = match &mut cfg.detection {
+        DetectionConfig::RangeEquation(c) => {
+            c.pfa = pfa;
+            c.range_resolution
+        }
+        _ => unreachable!("surveillance_2d uses the range equation"),
+    };
+    #[cfg(feature = "tracking")]
+    {
+        cfg.tracker = TrackerConfig::None;
+    }
+    let ScanConfig::Circular { rate, .. } = cfg.scan else {
+        unreachable!("surveillance_2d scans circularly")
+    };
+    let swept = rate * cfg.update_period.as_secs_f64();
+    let cells = resolution_cells(&cfg.limits, resolution, swept, cfg.antenna.beamwidth_az);
+    let expected = pfa * cells;
+
+    let (radar, own) = (SensorId(1), PlatformId(1));
+    let mut sim = Simulation::new(SimulationConfig::default().seed(Seed(5)));
+    sim.add_radar(radar, own, Pose3::IDENTITY, cfg).unwrap();
+    let mut w = WorldSnapshot::new(SimTime::ZERO);
+    w.platforms.push(PlatformState {
+        id: own,
+        pose: Pose3::IDENTITY,
+        velocity: Vector3::ZERO,
+    });
+    sim.update_world(w).unwrap();
+    let mut out = Vec::new();
+    let mut alarms = 0usize;
+    for _ in 0..UPDATES {
+        sim.step_open(SimDuration::from_millis(100)).unwrap();
+        sim.drain(radar, &mut out).unwrap();
+        alarms += out
+            .iter()
+            .filter(|o| matches!(o, Observation::Measurement(_)))
+            .count();
+        out.clear();
+    }
+    let mean = alarms as f64 / f64::from(UPDATES);
+    let sd = (expected / f64::from(UPDATES)).sqrt();
+    assert!(
+        (mean - expected).abs() <= 4.0 * sd,
+        "mean {mean} false alarms per update, expected {expected} ± {}",
+        4.0 * sd
+    );
+}

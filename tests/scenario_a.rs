@@ -1,5 +1,5 @@
 //! Acceptance scenario A (spec §14.1): a 2D rotating surveillance radar
-//! against five moving targets of different RCS and range.
+//! against six moving targets of different RCS and range.
 //!
 //! Ground truth is used only here, in the test, to match observations to
 //! targets by nearest position; the library never sees it.
@@ -15,14 +15,19 @@ const STEPS: usize = 1200;
 const REVOLUTIONS: f64 = 30.0;
 const SPEED: f64 = 80.0;
 
-/// (RCS m², range km, bearing deg), strongest echo (σ/R⁴) first.
-const TARGETS: [(f64, f64, f64); 5] = [
+/// (RCS m², range km, bearing deg), strongest echo (σ/R⁴) first. The
+/// last, [`WEAK`], has Pd ≈ 0.28 per look: it exercises detection-rate
+/// ordering and misses, but is too weak to be expected to hold a track.
+const TARGETS: [(f64, f64, f64); 6] = [
     (10.0, 20.0, 36.0),
     (1.0, 20.0, 108.0),
     (10.0, 40.0, 180.0),
     (1.0, 40.0, 252.0),
     (1.0, 60.0, 324.0),
+    (0.1, 60.0, 288.0),
 ];
+/// Index of the 0.1 m² target at 60 km.
+const WEAK: usize = 5;
 
 fn targets() -> Vec<TargetState> {
     TARGETS
@@ -122,13 +127,15 @@ fn scenario_a_rotating_surveillance() {
     }
     let rates: Vec<f64> = dwells.iter().map(|&d| f64::from(d) / REVOLUTIONS).collect();
 
-    // Detection rate falls with σ/R⁴. The strongest four have Pd above
-    // 0.97, so neighbours may swap by sampling noise: each must be at least
-    // its weaker neighbour minus two binomial standard deviations (and at
-    // least one dwell). The strongest is at least the weakest, strictly so
-    // unless the weakest is itself above 0.95 (both near 1 may tie).
+    // Detection rate falls with σ/R⁴. Among the five trackable targets the
+    // strongest four have Pd above 0.97, so neighbours may swap by sampling
+    // noise: each must be at least its weaker neighbour minus two binomial
+    // standard deviations (and at least one dwell). The strongest is at
+    // least the fifth, strictly so unless the fifth is itself above 0.95.
+    // The weak target must be strictly below the strongest, and misses must
+    // actually occur.
     assert!(rates.iter().all(|&r| r <= 1.0), "{rates:?}");
-    for pair in rates.windows(2) {
+    for pair in rates[..WEAK].windows(2) {
         let p = (pair[0] + pair[1]) / 2.0;
         let slack = (2.0 * (p * (1.0 - p) / REVOLUTIONS).sqrt()).max(1.0 / REVOLUTIONS);
         assert!(pair[0] + slack >= pair[1], "rates not ordered: {rates:?}");
@@ -137,13 +144,18 @@ fn scenario_a_rotating_surveillance() {
     if rates[4] < 0.95 {
         assert!(rates[0] > rates[4], "{rates:?}");
     }
+    assert!(rates[WEAK] < rates[0], "weak target not weaker: {rates:?}");
+    assert!(
+        rates.iter().any(|&r| r < 1.0),
+        "no target missed a dwell: {rates:?}"
+    );
     assert!(false_alarms >= 1, "no false alarm at pfa 1e-4");
 
-    // Every target ends with an established track (Confirmed, or Coasting
-    // after a last-look miss) on the right course.
+    // Every trackable target ends with an established track (Confirmed, or
+    // Coasting after a last-look miss) on the right course.
     let tracks = sim.tracks(RADAR).unwrap();
     let now = sim.now();
-    for (i, t) in targets.iter().enumerate() {
+    for (i, t) in targets.iter().enumerate().take(WEAK) {
         let track = tracks
             .iter()
             .filter(|tr| matches!(tr.status, TrackStatus::Confirmed | TrackStatus::Coasting))
