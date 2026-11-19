@@ -3,6 +3,8 @@
 
 pub mod environment;
 pub mod error;
+#[cfg(feature = "ew")]
+pub(crate) mod ew;
 pub mod geometry;
 pub mod ids;
 pub mod radar;

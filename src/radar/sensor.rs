@@ -1,8 +1,13 @@
-//! The radar as a [`SensorModel`]: scan, detect, measure, identify.
+//! The radar as a [`SensorModel`]: scan, detect, measure, identify,
+//! report jamming strobes, track.
 
 use crate::error::RadarError;
+#[cfg(feature = "ew")]
+use crate::ew::{jammer_jnr, strobe_sigma};
 use crate::geometry::{Rotation3, Vector3, azimuth_of, direction, elevation_of};
-use crate::ids::{SensorId, TransponderCode};
+#[cfg(feature = "ew")]
+use crate::geometry::{wrap_pi, wrap_two_pi};
+use crate::ids::{PlatformId, SensorId, TransponderCode};
 use crate::radar::config::{DetectionConfig, Dimension, RadarConfig, ScanFrame};
 use crate::radar::detection::{
     DetectionContext, DetectionModel, DetectionResult, RadiusDetector, RangeEquationDetector,
@@ -13,11 +18,15 @@ use crate::radar::measurement::{Measurement, measurement_sigma, noisy_measuremen
 use crate::radar::scan::ScanConfig;
 use crate::radar::scan::{ScanState, Sweep, advance, half_extent, illumination, initial_state};
 use crate::random::RandomSource;
+#[cfg(feature = "ew")]
+use crate::random::sample::standard_normal;
 use crate::random::sample::{bernoulli, uniform01};
 use crate::sensor::{Observation, SensorContext, SensorModel};
 #[cfg(feature = "tracking")]
 use crate::tracking::{BeamMotion, Track, TrackManager, TrackerConfig, with_tracker};
 use crate::units::linear_to_db;
+#[cfg(feature = "ew")]
+use crate::world::EmitterState;
 use std::f64::consts::FRAC_PI_2;
 
 /// Half-width (m/s) of the uniform radial velocity given to false alarms
@@ -38,6 +47,19 @@ impl Frame {
         let local = self.rotation.inverse().rotate(rel);
         (rel.length(), azimuth_of(local), elevation_of(local))
     }
+}
+
+/// A jammer in line of sight during this update.
+#[cfg(feature = "ew")]
+#[derive(Debug, Clone)]
+struct Jammer {
+    emitter: EmitterState,
+    /// Range from the sensor, m.
+    range: f64,
+    /// Scan-frame azimuth.
+    azimuth: f64,
+    /// Scan-frame elevation.
+    elevation: f64,
 }
 
 /// A real detection awaiting identification.
@@ -195,12 +217,126 @@ impl RadarSensor {
         }
     }
 
+    /// Every emitter in line of sight, in `EmitterId` order, with its
+    /// scan-frame geometry. Empty without a receiver band (immune radar).
+    /// Emitters on the radar's own platform are ignored.
+    #[cfg(feature = "ew")]
+    fn visible_jammers(&self, ctx: &SensorContext<'_>, frame: Frame) -> Vec<Jammer> {
+        if self.cfg.receiver_band.is_none() {
+            return Vec::new();
+        }
+        ctx.world
+            .emitters
+            .iter()
+            .filter(|e| e.platform != Some(ctx.platform.id))
+            .filter(|e| {
+                !ctx.environment
+                    .line_of_sight_blocked(frame.position, e.position)
+            })
+            .map(|e| {
+                let (range, azimuth, elevation) = frame.look_at(e.position);
+                Jammer {
+                    emitter: e.clone(),
+                    range,
+                    azimuth,
+                    elevation,
+                }
+            })
+            .collect()
+    }
+
+    /// Total J/N (linear) toward a target at scan-frame `(az, el)`: each
+    /// jammer contributes with the antenna gain at its angular offset from
+    /// the target's line of sight (full gain when it rides on the target's
+    /// platform: self-protection).
+    #[cfg(feature = "ew")]
+    fn jamming_to_noise(
+        &self,
+        jammers: &[Jammer],
+        target_platform: Option<PlatformId>,
+        az: f64,
+        el: f64,
+    ) -> f64 {
+        let (antenna, dim) = (&self.cfg.antenna, self.cfg.dimension);
+        jammers
+            .iter()
+            .map(|j| {
+                let gain = if target_platform.is_some() && j.emitter.platform == target_platform {
+                    antenna.gain(0.0, 0.0, dim)
+                } else {
+                    antenna.gain(wrap_pi(j.azimuth - az), j.elevation - el, dim)
+                };
+                jammer_jnr(&self.cfg, &j.emitter, j.range, gain)
+            })
+            .sum()
+    }
+
+    /// A strobe for every jammer the sweep illuminates whose main-beam J/N
+    /// reaches `strobe_threshold_db`. Noise is drawn in `EmitterId` order;
+    /// the result is sorted by azimuth.
+    #[cfg(feature = "ew")]
+    fn strobes(
+        &self,
+        ctx: &mut SensorContext<'_>,
+        frame: Frame,
+        sweep: &Sweep,
+        jammers: &[Jammer],
+    ) -> Vec<Observation> {
+        let (antenna, dim) = (&self.cfg.antenna, self.cfg.dimension);
+        let mut out = Vec::new();
+        for j in jammers {
+            let Some((off_az, off_el)) =
+                illumination(sweep, j.azimuth, j.elevation, 0.0, antenna, dim)
+            else {
+                continue;
+            };
+            let jnr = jammer_jnr(
+                &self.cfg,
+                &j.emitter,
+                j.range,
+                antenna.gain(off_az, off_el, dim),
+            );
+            let j_over_n_db = linear_to_db(jnr);
+            if !(jnr > 0.0 && j_over_n_db >= self.cfg.strobe_threshold_db) {
+                continue;
+            }
+            let az = wrap_two_pi(
+                j.azimuth
+                    + strobe_sigma(antenna.beamwidth_az, jnr) * standard_normal(&mut *ctx.rng),
+            );
+            let el = match dim {
+                Dimension::TwoD => 0.0,
+                Dimension::ThreeD => {
+                    j.elevation
+                        + strobe_sigma(antenna.beamwidth_el, jnr) * standard_normal(&mut *ctx.rng)
+                }
+            };
+            let d_world = frame.rotation.rotate(direction(az, el));
+            out.push(Observation::JammingStrobe {
+                sensor: ctx.sensor,
+                time: ctx.time,
+                azimuth: azimuth_of(d_world),
+                elevation: (dim == Dimension::ThreeD)
+                    .then(|| elevation_of(d_world).clamp(-FRAC_PI_2, FRAC_PI_2)),
+                j_over_n_db,
+            });
+        }
+        let az_of = |o: &Observation| match o {
+            Observation::JammingStrobe { azimuth, .. } => *azimuth,
+            _ => 0.0,
+        };
+        out.sort_by(|a, b| az_of(a).total_cmp(&az_of(b)));
+        out
+    }
+
     /// Looks at every target in id order and measures the detected ones.
+    /// `jamming(platform, az, el)` gives the J/N toward a target.
     fn detect_targets(
         &self,
         ctx: &mut SensorContext<'_>,
         frame: Frame,
         sweep: &Sweep,
+        jamming: impl Fn(Option<PlatformId>, f64, f64) -> f64,
         pending: &mut Vec<Pending>,
     ) {
         let world = ctx.world;
@@ -236,7 +372,7 @@ impl RadarSensor {
                 rcs_m2: target.signature.rcs_m2,
                 swerling: target.signature.swerling,
                 pattern_gain: self.cfg.antenna.gain(off_az, off_el, self.cfg.dimension),
-                jamming_to_noise: 0.0,
+                jamming_to_noise: jamming(target.platform, az_s, el_s),
             };
             let result = self.detect(&look, &mut *ctx.rng);
             if !result.detected {
@@ -335,11 +471,21 @@ impl SensorModel for RadarSensor {
         );
         let frame = self.frame(ctx);
 
+        #[cfg(feature = "ew")]
+        let jammers = self.visible_jammers(ctx, frame);
+        #[cfg(feature = "ew")]
+        let jamming = |p, az, el| self.jamming_to_noise(&jammers, p, az, el);
+        #[cfg(not(feature = "ew"))]
+        let jamming = |_: Option<PlatformId>, _: f64, _: f64| 0.0;
+
+        // Draw order: targets, false alarms, identification, strobes, tracking.
         let mut pending = Vec::new();
-        self.detect_targets(ctx, frame, &sweep, &mut pending);
+        self.detect_targets(ctx, frame, &sweep, jamming, &mut pending);
         let mut false_alarms = Vec::new();
         self.false_alarms(ctx, frame, &sweep, &mut false_alarms);
         self.identify(ctx, &mut pending);
+        #[cfg(feature = "ew")]
+        let mut strobes = self.strobes(ctx, frame, &sweep, &jammers);
 
         let mut measurements: Vec<Measurement> =
             pending.into_iter().map(|p| p.measurement).collect();
@@ -383,6 +529,8 @@ impl SensorModel for RadarSensor {
         }
 
         out.extend(measurements.into_iter().map(Observation::Measurement));
+        #[cfg(feature = "ew")]
+        out.append(&mut strobes);
         #[cfg(feature = "tracking")]
         out.append(&mut track_obs);
         if sweep.completed {

@@ -24,7 +24,7 @@ pub struct SensorContext<'a> {
     pub platform: &'a PlatformState,
     /// The sensor's mount pose relative to the platform body.
     pub mount: Pose3,
-    /// The current world snapshot (targets sorted by id).
+    /// The current world snapshot (targets and emitters sorted by id).
     pub world: &'a WorldSnapshot,
     /// Line-of-sight occlusion.
     pub environment: &'a dyn Environment,
@@ -73,5 +73,20 @@ pub enum Observation {
         id: TrackId,
         /// Time of the update that deleted it.
         time: SimTime,
+    },
+    /// A noise jammer seen in the beam (feature `ew`). Bearing only: a
+    /// jammer gives no range.
+    #[cfg(feature = "ew")]
+    JammingStrobe {
+        /// The reporting sensor.
+        sensor: SensorId,
+        /// Time of the update.
+        time: SimTime,
+        /// Noisy world-frame azimuth of the jammer, radians in `[0, 2π)`.
+        azimuth: f64,
+        /// Noisy world-frame elevation of the jammer (3D radars only).
+        elevation: Option<f64>,
+        /// Main-beam jamming-to-noise ratio, dB.
+        j_over_n_db: f64,
     },
 }

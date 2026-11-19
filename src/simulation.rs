@@ -307,7 +307,8 @@ impl Simulation {
         Ok(())
     }
 
-    /// Replaces the world snapshot (targets are stored sorted by id).
+    /// Replaces the world snapshot (targets and emitters are stored sorted
+    /// by id).
     ///
     /// # Errors
     /// `InvalidWorld` if the snapshot fails validation;
@@ -321,6 +322,7 @@ impl Simulation {
             });
         }
         snapshot.targets.sort_by_key(|t| t.id);
+        snapshot.emitters.sort_by_key(|e| e.id);
         self.world = snapshot;
         Ok(())
     }
