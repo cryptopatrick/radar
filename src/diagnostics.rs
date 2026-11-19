@@ -41,8 +41,9 @@ pub struct DiagnosticRecord {
     pub target: Option<TargetId>,
     /// True range to the target, m (`None` for a false alarm).
     pub true_range: Option<f64>,
-    /// Mean SNR in dB for a look (measured SNR for a detection or false
-    /// alarm), if the detector computes one.
+    /// SNR in dB for a look: the measured SNR when the detector provides
+    /// one (detections, misses and false alarms alike), otherwise the mean
+    /// SNR; `None` if the detector computes neither.
     pub snr_db: Option<f64>,
     /// Analytic probability of detection for the look, if one was made.
     pub pd: Option<f64>,
