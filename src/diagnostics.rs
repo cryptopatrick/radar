@@ -3,6 +3,11 @@
 //! Observations never reveal ground truth; this channel exposes it for
 //! debugging and tests. Recording never draws random numbers, so enabling
 //! the feature does not change any observation.
+//!
+//! Records accumulate in each radar until
+//! [`Simulation::drain_diagnostics`](crate::simulation::Simulation::drain_diagnostics)
+//! is called, so drain regularly in long runs. Targets carried by the
+//! radar's own platform are never looked at, so they produce no record.
 
 use crate::ids::{SensorId, TargetId};
 use crate::radar::Measurement;

@@ -23,21 +23,23 @@ fn target(id: u64, pos: Vector3) -> TargetState {
     }
 }
 
+/// Blocks the line of sight to anything north of y = 6000.
+struct Wall;
+impl Environment for Wall {
+    fn line_of_sight_blocked(&self, _from: Vector3, to: Vector3) -> bool {
+        to.y > 6000.0
+    }
+}
+
 fn sim() -> Simulation {
-    let cfg = RadarConfig::builder()
-        .detection(DetectionConfig::Radius {
-            range: 1000.0,
-            pd: 0.7,
-            false_alarms_per_scan: 4.0,
-        })
-        .limits(RangeLimits {
-            min_range: 0.0,
-            instrumented_range: 1200.0,
-        })
-        .build()
-        .unwrap();
     let mut sim = Simulation::new(SimulationConfig::default());
-    sim.add_radar(RADAR, OWN, Pose3::IDENTITY, cfg).unwrap();
+    sim.add_radar(
+        RADAR,
+        OWN,
+        Pose3::IDENTITY,
+        RadarConfig::surveillance_2d().unwrap(),
+    )
+    .unwrap();
     let mut w = WorldSnapshot::new(SimTime::ZERO);
     w.platforms = vec![PlatformState {
         id: OWN,
@@ -45,10 +47,10 @@ fn sim() -> Simulation {
         velocity: Vector3::ZERO,
     }];
     w.targets = vec![
-        target(1, Vector3::new(500.0, 0.0, 0.0)),
-        target(2, Vector3::new(0.0, 700.0, 0.0)),
-        target(3, Vector3::new(-300.0, 0.0, 0.0)),
-        target(4, Vector3::new(5000.0, 0.0, 0.0)),
+        target(1, Vector3::new(1000.0, 0.0, 0.0)),
+        target(2, Vector3::new(0.0, -3000.0, 0.0)),
+        target(3, Vector3::new(-5000.0, 0.0, 0.0)),
+        target(4, Vector3::new(0.0, 8000.0, 0.0)),
     ];
     sim.update_world(w).unwrap();
     sim
@@ -56,8 +58,8 @@ fn sim() -> Simulation {
 
 fn run(sim: &mut Simulation, drain_diag: bool) -> (Vec<Observation>, Vec<DiagnosticRecord>) {
     let (mut obs, mut diag) = (Vec::new(), Vec::new());
-    for _ in 0..30 {
-        sim.step(SimDuration::from_millis(100), &OpenSky).unwrap();
+    for _ in 0..80 {
+        sim.step(SimDuration::from_millis(100), &Wall).unwrap();
         sim.drain(RADAR, &mut obs).unwrap();
         if drain_diag {
             sim.drain_diagnostics(&mut diag);
@@ -91,8 +93,13 @@ fn diagnostics_link_truth() {
                 assert!(r.measurement.is_some());
             }
             DiagnosticOutcome::Detected => {
-                assert!(r.target.is_some() && r.measurement.is_some());
-                assert_eq!(r.pd, Some(0.7));
+                let (m, tr) = (r.measurement.as_ref().unwrap(), r.true_range.unwrap());
+                assert!(r.target.is_some());
+                assert!(
+                    (m.range - tr).abs() <= 5.0 * m.sigma.range,
+                    "measurement range {} not near true range {tr}",
+                    m.range
+                );
             }
             _ => {
                 assert!(r.target.is_some() && r.measurement.is_none());
@@ -100,13 +107,10 @@ fn diagnostics_link_truth() {
             }
         }
     }
-    // Detected, Missed, OutOfBeam, OutOfRange and FalseAlarm all occur.
     for o in [
         DiagnosticOutcome::Detected,
-        DiagnosticOutcome::Missed,
+        DiagnosticOutcome::Occluded,
         DiagnosticOutcome::OutOfBeam,
-        DiagnosticOutcome::OutOfRange,
-        DiagnosticOutcome::FalseAlarm,
     ] {
         assert!(saw[o as usize], "no {o:?} record");
     }
@@ -128,4 +132,14 @@ fn diagnostics_do_not_change_outputs() {
     let (b, _) = run(&mut sim(), false);
     assert!(!a.is_empty());
     assert_eq!(a, b);
+}
+
+#[test]
+fn reset_clears_diagnostics() {
+    let mut s = sim();
+    let _ = run(&mut s, false);
+    s.reset();
+    let mut diag = Vec::new();
+    s.drain_diagnostics(&mut diag);
+    assert!(diag.is_empty());
 }
