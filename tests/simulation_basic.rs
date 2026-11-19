@@ -398,3 +398,74 @@ fn three_d_reports_world_elevation() {
     assert!((ms[0].azimuth - FRAC_PI_2).abs() < 1e-9);
     assert!((ms[0].elevation.unwrap() - el).abs() < 1e-9);
 }
+
+#[cfg(feature = "entropy")]
+#[test]
+fn entropy_seed_recorded() {
+    let s = Seed::from_entropy().unwrap();
+    let sim = Simulation::new(SimulationConfig::default().seed(s));
+    assert_eq!(sim.seed(), s);
+    assert!(sim.is_deterministic());
+}
+
+/// A source that always returns the largest word (uniform01 just below 1).
+struct MaxSource;
+
+impl RandomSource for MaxSource {
+    fn next_u64(&mut self) -> u64 {
+        u64::MAX
+    }
+}
+
+fn pd_half_detections(sim: &mut Simulation) -> usize {
+    let mut n = 0;
+    for _ in 0..20 {
+        n += measurements(&run_one_second(sim, &OpenSky)).len();
+    }
+    n
+}
+
+#[test]
+fn custom_source_used() {
+    let cfg = || {
+        RadarConfig::builder()
+            .detection(DetectionConfig::Radius {
+                range: 1200.0,
+                pd: 0.5,
+                false_alarms_per_scan: 0.0,
+            })
+            .limits(RangeLimits {
+                min_range: 0.0,
+                instrumented_range: 1200.0,
+            })
+            .build()
+            .unwrap()
+    };
+    let w = || {
+        world(
+            vec![platform_at(Vector3::ZERO, 0.0)],
+            vec![target(1, Vector3::new(500.0, 0.0, 0.0))],
+        )
+    };
+    let mut default = sim_with(cfg(), w());
+    assert!(default.is_deterministic());
+    assert!(pd_half_detections(&mut default) > 0);
+
+    let sim_cfg =
+        SimulationConfig::default().random_source_factory(Box::new(|_| Box::new(MaxSource)));
+    let mut custom = Simulation::new(sim_cfg);
+    assert!(!custom.is_deterministic());
+    custom
+        .add_radar(RADAR, OWN, Pose3::IDENTITY, cfg())
+        .unwrap();
+    custom.update_world(w()).unwrap();
+    assert_eq!(pd_half_detections(&mut custom), 0);
+    custom.reset();
+    assert!(!custom.is_deterministic());
+}
+
+#[test]
+fn simulation_is_send() {
+    fn assert_send<T: Send>() {}
+    assert_send::<Simulation>();
+}

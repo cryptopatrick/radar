@@ -20,6 +20,26 @@ pub trait RandomSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Seed(pub u64);
 
+impl Seed {
+    /// Draws a fresh seed from operating-system entropy.
+    ///
+    /// The seed is an ordinary [`Seed`], so recording it (see
+    /// `Simulation::seed`) allows the run to be replayed exactly.
+    ///
+    /// # Errors
+    /// `EntropyUnavailable` if the operating system cannot supply entropy.
+    #[cfg(feature = "entropy")]
+    pub fn from_entropy() -> Result<Seed, crate::error::RadarError> {
+        getrandom::u64()
+            .map(Seed)
+            .map_err(|e| crate::error::RadarError::EntropyUnavailable(e.to_string()))
+    }
+}
+
+/// Builds the random source for one stream of a simulation; see
+/// `SimulationConfig::random_source_factory`.
+pub type RandomSourceFactory = Box<dyn Fn(StreamId) -> Box<dyn RandomSource + Send> + Send>;
+
 /// Identifies an independent random stream derived from a [`Seed`].
 ///
 /// Sensor ids of `2^62` or more would overflow the stream index and collide
@@ -72,6 +92,14 @@ mod tests {
 
     fn stream(seed: u64, id: u64) -> ChaChaStream {
         ChaChaStream::new(Seed(seed), StreamId::Sensor(SensorId(id)))
+    }
+
+    #[cfg(feature = "entropy")]
+    #[test]
+    fn from_entropy_differs() {
+        let a = Seed::from_entropy().unwrap();
+        let b = Seed::from_entropy().unwrap();
+        assert_ne!(a, b);
     }
 
     #[test]

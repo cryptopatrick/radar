@@ -32,7 +32,7 @@ pub mod prelude {
         DetectionResult, Dimension, Measurement, MeasurementConfig, MeasurementSigma, RadarConfig,
         RangeLimits, ScanConfig, ScanFrame,
     };
-    pub use crate::random::{RandomSource, Seed, StreamId};
+    pub use crate::random::{RandomSource, RandomSourceFactory, Seed, StreamId};
     pub use crate::sensor::{Observation, SensorContext, SensorModel};
     pub use crate::simulation::{SensorStatus, Simulation, SimulationConfig, StepPolicy};
     pub use crate::time::{SimDuration, SimTime};

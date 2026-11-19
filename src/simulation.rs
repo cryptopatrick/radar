@@ -10,7 +10,7 @@ use crate::ids::{PlatformId, SensorId};
 use crate::radar::config::RadarConfig;
 use crate::radar::scan::ScanConfig;
 use crate::radar::sensor::RadarSensor;
-use crate::random::{ChaChaStream, RandomSource, Seed, StreamId};
+use crate::random::{ChaChaStream, RandomSource, RandomSourceFactory, Seed, StreamId};
 use crate::sensor::{Observation, SensorContext, SensorModel};
 use crate::time::{SimDuration, SimTime};
 #[cfg(feature = "tracking")]
@@ -35,10 +35,20 @@ pub enum StepPolicy {
 
 /// Simulation settings: master seed (default `Seed(0)`) and step policy
 /// (default [`StepPolicy::SingleStep`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimulationConfig {
     seed: Seed,
     step_policy: StepPolicy,
+    factory: Option<RandomSourceFactory>,
+}
+
+impl fmt::Debug for SimulationConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SimulationConfig")
+            .field("seed", &self.seed)
+            .field("step_policy", &self.step_policy)
+            .field("random_source_factory", &self.factory.is_some())
+            .finish()
+    }
 }
 
 impl Default for SimulationConfig {
@@ -46,6 +56,7 @@ impl Default for SimulationConfig {
         Self {
             seed: Seed(0),
             step_policy: StepPolicy::SingleStep,
+            factory: None,
         }
     }
 }
@@ -54,6 +65,20 @@ impl SimulationConfig {
     /// Sets the master seed.
     pub fn seed(mut self, seed: Seed) -> Self {
         self.seed = seed;
+        self
+    }
+
+    /// Supplies the random source for every per-sensor stream, replacing
+    /// the seeded ChaCha8 streams. The factory is called with
+    /// `StreamId::Sensor(id)` when a sensor is added and again on
+    /// [`Simulation::reset`]. Use it for hardware or other external noise.
+    ///
+    /// This is non-deterministic: unless the factory itself is replayable,
+    /// runs cannot be reproduced, `reset` does not reproduce the run, and
+    /// [`Simulation::is_deterministic`] returns `false`. The seed is then
+    /// not used for sensor streams.
+    pub fn random_source_factory(mut self, f: RandomSourceFactory) -> Self {
+        self.factory = Some(f);
         self
     }
 
@@ -113,6 +138,7 @@ struct SensorEntry {
 pub struct Simulation {
     seed: Seed,
     step_policy: StepPolicy,
+    factory: Option<RandomSourceFactory>,
     now: SimTime,
     world: WorldSnapshot,
     sensors: BTreeMap<SensorId, SensorEntry>,
@@ -129,6 +155,17 @@ impl fmt::Debug for Simulation {
     }
 }
 
+fn make_stream(
+    seed: Seed,
+    factory: Option<&RandomSourceFactory>,
+    id: SensorId,
+) -> Box<dyn RandomSource + Send> {
+    match factory {
+        Some(f) => f(StreamId::Sensor(id)),
+        None => Box::new(ChaChaStream::new(seed, StreamId::Sensor(id))),
+    }
+}
+
 fn invalid(field: &'static str, reason: &str) -> RadarError {
     RadarError::InvalidConfig {
         field,
@@ -142,6 +179,7 @@ impl Simulation {
         Self {
             seed: config.seed,
             step_policy: config.step_policy,
+            factory: config.factory,
             now: SimTime::ZERO,
             world: WorldSnapshot::new(SimTime::ZERO),
             sensors: BTreeMap::new(),
@@ -217,7 +255,7 @@ impl Simulation {
             next_due: self.now + period,
             enabled: true,
             kind,
-            rng: Box::new(ChaChaStream::new(self.seed, StreamId::Sensor(id))),
+            rng: make_stream(self.seed, self.factory.as_ref(), id),
             queue: Vec::new(),
         };
         self.sensors.insert(id, entry);
@@ -457,7 +495,8 @@ impl Simulation {
     /// registration: time 0, the world an empty snapshot at time 0, each
     /// sensor due one period later, radar scans at their initial state,
     /// queues cleared, tracks dropped (numbering restarts at 1) and random
-    /// streams rebuilt from the seed. Sensors, their configs and enabled
+    /// streams rebuilt from the seed (with a random source factory, the
+    /// factory is invoked again and the run is not reproduced). Sensors, their configs and enabled
     /// flags are kept.
     ///
     /// The host must feed the world again with
@@ -470,11 +509,17 @@ impl Simulation {
         for (&id, e) in self.sensors.iter_mut() {
             e.next_due = SimTime::ZERO + e.period;
             e.queue.clear();
-            e.rng = Box::new(ChaChaStream::new(self.seed, StreamId::Sensor(id)));
+            e.rng = make_stream(self.seed, self.factory.as_ref(), id);
             if let SensorKind::Radar(r) = &mut e.kind {
                 r.reset();
             }
         }
+    }
+
+    /// Whether runs are reproducible from the seed: `false` when a random
+    /// source factory is set.
+    pub fn is_deterministic(&self) -> bool {
+        self.factory.is_none()
     }
 
     /// The master seed.
