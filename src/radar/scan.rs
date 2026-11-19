@@ -441,6 +441,37 @@ pub fn illumination(
     Some((off_az, off_el))
 }
 
+/// Whether a sweep illuminates a tracked position *confidently*: the
+/// direction must lie inside the beam by the track's own angular
+/// uncertainty, so a track whose prediction sits near a beam edge is not
+/// penalised for a miss it may not deserve.
+///
+/// `sigma_ang = position_sigma / max(range, 1 m)`; the margin on each axis
+/// is `min(sigma_ang, half_beamwidth / 2)` (a non-finite sigma uses the
+/// cap). This equals [`illumination`] with a negative half-extent of that
+/// margin per axis; it is computed by narrowing the beam, because the
+/// margins differ between the azimuth and elevation axes.
+#[cfg(feature = "tracking")]
+pub(crate) fn confidently_illuminated(
+    sweep: &Sweep,
+    az: f64,
+    el: f64,
+    range: f64,
+    position_sigma: f64,
+    antenna: &AntennaConfig,
+    dim: Dimension,
+) -> bool {
+    let sigma_ang = position_sigma / range.max(1.0);
+    // f64::min ignores a NaN operand, so a NaN sigma takes the cap.
+    let margin = |bw: f64| sigma_ang.min(bw / 4.0);
+    let narrowed = AntennaConfig {
+        beamwidth_az: antenna.beamwidth_az - 2.0 * margin(antenna.beamwidth_az),
+        beamwidth_el: antenna.beamwidth_el - 2.0 * margin(antenna.beamwidth_el),
+        ..*antenna
+    };
+    illumination(sweep, az, el, 0.0, &narrowed, dim).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,6 +498,78 @@ mod tests {
             elevation,
             completed: false,
         }
+    }
+
+    #[cfg(feature = "tracking")]
+    #[test]
+    fn confident_cover_needs_margin_of_track_uncertainty() {
+        // 2° × 2° beam on a bar at 3°: its lower edge is at 2°.
+        let antenna = beam(deg(2.0));
+        let s = sweep(0.0, 0.3, deg(3.0));
+        let range = 60_000.0;
+        // A prediction at 2.1° (0.1° inside the edge) with a 250 m sigma
+        // (≈0.24°) may well be outside the beam: not penalised.
+        assert!(illumination(&s, 0.1, deg(2.1), 0.0, &antenna, Dimension::ThreeD).is_some());
+        assert!(!confidently_illuminated(
+            &s,
+            0.1,
+            deg(2.1),
+            range,
+            250.0,
+            &antenna,
+            Dimension::ThreeD
+        ));
+        // A precise track at the same spot is penalised.
+        assert!(confidently_illuminated(
+            &s,
+            0.1,
+            deg(2.1),
+            range,
+            10.0,
+            &antenna,
+            Dimension::ThreeD
+        ));
+        // The margin is capped at half the half-beamwidth: a huge sigma
+        // still counts on boresight (0.5° from the edge = cap) ...
+        assert!(confidently_illuminated(
+            &s,
+            0.1,
+            deg(3.0),
+            range,
+            1e9,
+            &antenna,
+            Dimension::ThreeD
+        ));
+        // ... but not beyond the cap.
+        assert!(!confidently_illuminated(
+            &s,
+            0.1,
+            deg(2.4),
+            range,
+            1e9,
+            &antenna,
+            Dimension::ThreeD
+        ));
+        // Azimuth: 0.9° past the arc end of a 2° beam (edge at 1°).
+        assert!(!confidently_illuminated(
+            &s,
+            0.3 + deg(0.9),
+            deg(3.0),
+            range,
+            250.0,
+            &antenna,
+            Dimension::ThreeD
+        ));
+        // Non-finite sigma uses the cap.
+        assert!(confidently_illuminated(
+            &s,
+            0.1,
+            deg(3.0),
+            range,
+            f64::NAN,
+            &antenna,
+            Dimension::ThreeD
+        ));
     }
 
     #[test]

@@ -413,9 +413,10 @@ impl TrackManager {
     /// updates lifecycles and starts tracks, appending `TrackUpdated` for
     /// every created, updated or missed track (in id order; a track deleted
     /// by its miss is reported with status `Deleted`) and then
-    /// `TrackDeleted` for every deleted track (in id order). `covered` says
-    /// whether the beam illuminated a world position this update; only
-    /// covered tracks can miss.
+    /// `TrackDeleted` for every deleted track (in id order). `covered(p, sigma)`
+    /// says whether the beam confidently illuminated a predicted position
+    /// `p` with position sigma `sigma` this update; only covered tracks can
+    /// miss.
     ///
     /// With a sweeping scan, a track's consecutive in-beam updates form one
     /// dwell with at most one outcome: the first associated measurement
@@ -429,7 +430,7 @@ impl TrackManager {
         time: SimTime,
         beam: BeamMotion,
         measurements: &[Measurement],
-        covered: impl Fn(Vector3) -> bool,
+        covered: impl Fn(Vector3, f64) -> bool,
         out: &mut Vec<Observation>,
     ) {
         // 1. Predict each track from its own last-hit time.
@@ -481,7 +482,8 @@ impl TrackManager {
         let mut records = std::mem::take(&mut self.tracks);
         let mut kept = Vec::with_capacity(records.len() + measurements.len());
         for ((mut rec, pred), assignment) in records.drain(..).zip(predicted).zip(assigned) {
-            let in_cover = covered(Vector3::new(pred.x[0], pred.x[1], pred.x[2]));
+            let p_pred = Vector3::new(pred.x[0], pred.x[1], pred.x[2]);
+            let in_cover = covered(p_pred, pred.p.position_sigma());
             let mut delete = false;
             let mut reported = false;
             let mut applied = false;

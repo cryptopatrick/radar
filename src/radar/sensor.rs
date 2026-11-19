@@ -18,6 +18,8 @@ use crate::radar::false_alarm::{FalseAlarm, generate_false_alarms, generate_radi
 use crate::radar::measurement::{Measurement, measurement_sigma, noisy_measurement};
 #[cfg(feature = "tracking")]
 use crate::radar::scan::ScanConfig;
+#[cfg(feature = "tracking")]
+use crate::radar::scan::confidently_illuminated;
 use crate::radar::scan::{ScanState, Sweep, advance, half_extent, illumination, initial_state};
 use crate::random::RandomSource;
 #[cfg(feature = "ew")]
@@ -582,9 +584,9 @@ impl SensorModel for RadarSensor {
         #[cfg(feature = "tracking")]
         if let Some(manager) = &mut self.tracks {
             let (antenna, dim) = (&self.cfg.antenna, self.cfg.dimension);
-            let covered = |p: Vector3| {
-                let (_, az, el) = frame.look_at(p);
-                illumination(&sweep, az, el, 0.0, antenna, dim).is_some()
+            let covered = |p: Vector3, position_sigma: f64| {
+                let (range, az, el) = frame.look_at(p);
+                confidently_illuminated(&sweep, az, el, range, position_sigma, antenna, dim)
             };
             let beam = BeamMotion {
                 sweeping: matches!(
