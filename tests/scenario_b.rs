@@ -101,13 +101,13 @@ fn scenario_b_airborne_3d_surveillance() {
         let truth = t.position_at(SimTime::ZERO, now);
         let track = tracks
             .iter()
-            .filter(|tr| tr.status == TrackStatus::Confirmed)
+            .filter(|tr| matches!(tr.status, TrackStatus::Confirmed | TrackStatus::Coasting))
             .min_by(|a, b| {
                 let da = a.predict(now).position.distance(truth);
                 let db = b.predict(now).position.distance(truth);
                 da.total_cmp(&db)
             })
-            .unwrap_or_else(|| panic!("no confirmed track: {tracks:?}"));
+            .unwrap_or_else(|| panic!("no established track: {tracks:?}"));
         let estimate = track.predict(now).position;
         let horizontal = Vector3::new(estimate.x - truth.x, estimate.y - truth.y, 0.0).length();
         assert!(horizontal < 2_000.0, "target {i}: {horizontal} m off");

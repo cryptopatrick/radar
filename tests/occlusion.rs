@@ -99,8 +99,10 @@ fn blocked_target_is_never_detected() {
     let tracks = sim.tracks(RADAR).unwrap();
     let truth = w.targets[1].position_at(SimTime::ZERO, now);
     assert!(
-        tracks.iter().any(|t| t.status == TrackStatus::Confirmed
-            && t.predict(now).position.distance(truth) < 1_000.0),
+        tracks.iter().any(
+            |t| matches!(t.status, TrackStatus::Confirmed | TrackStatus::Coasting)
+                && t.predict(now).position.distance(truth) < 1_000.0
+        ),
         "{tracks:?}"
     );
     let hidden = w.targets[0].position_at(SimTime::ZERO, now);

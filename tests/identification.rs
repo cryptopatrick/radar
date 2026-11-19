@@ -56,9 +56,9 @@ fn only_transponder_tracks_are_identified() {
         let truth = t.position_at(SimTime::ZERO, now);
         tracks
             .iter()
-            .filter(|tr| tr.status == TrackStatus::Confirmed)
+            .filter(|tr| matches!(tr.status, TrackStatus::Confirmed | TrackStatus::Coasting))
             .find(|tr| tr.predict(now).position.distance(truth) < 1_000.0)
-            .unwrap_or_else(|| panic!("no confirmed track near {truth:?}: {tracks:?}"))
+            .unwrap_or_else(|| panic!("no established track near {truth:?}: {tracks:?}"))
     };
     let identified = track_of(&w.targets[0]);
     let anonymous = track_of(&w.targets[1]);

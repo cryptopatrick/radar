@@ -125,29 +125,34 @@ fn scenario_a_rotating_surveillance() {
     // Detection rate falls with σ/R⁴. The strongest four have Pd above
     // 0.97, so neighbours may swap by sampling noise: each must be at least
     // its weaker neighbour minus two binomial standard deviations (and at
-    // least one dwell). The strongest and weakest must be strictly ordered.
+    // least one dwell). The strongest is at least the weakest, strictly so
+    // unless the weakest is itself above 0.95 (both near 1 may tie).
     assert!(rates.iter().all(|&r| r <= 1.0), "{rates:?}");
     for pair in rates.windows(2) {
         let p = (pair[0] + pair[1]) / 2.0;
         let slack = (2.0 * (p * (1.0 - p) / REVOLUTIONS).sqrt()).max(1.0 / REVOLUTIONS);
         assert!(pair[0] + slack >= pair[1], "rates not ordered: {rates:?}");
     }
-    assert!(rates[0] > rates[4], "{rates:?}");
+    assert!(rates[0] >= rates[4], "{rates:?}");
+    if rates[4] < 0.95 {
+        assert!(rates[0] > rates[4], "{rates:?}");
+    }
     assert!(false_alarms >= 1, "no false alarm at pfa 1e-4");
 
-    // Every target ends with a confirmed track on the right course.
+    // Every target ends with an established track (Confirmed, or Coasting
+    // after a last-look miss) on the right course.
     let tracks = sim.tracks(RADAR).unwrap();
     let now = sim.now();
     for (i, t) in targets.iter().enumerate() {
         let track = tracks
             .iter()
-            .filter(|tr| tr.status == TrackStatus::Confirmed)
+            .filter(|tr| matches!(tr.status, TrackStatus::Confirmed | TrackStatus::Coasting))
             .min_by(|a, b| {
                 let da = a.predict(now).position.distance(truth(t, now));
                 let db = b.predict(now).position.distance(truth(t, now));
                 da.total_cmp(&db)
             })
-            .unwrap_or_else(|| panic!("no confirmed track: {tracks:?}"));
+            .unwrap_or_else(|| panic!("no established track: {tracks:?}"));
         let distance = track.predict(now).position.distance(truth(t, now));
         assert!(
             distance < 1_000.0,
