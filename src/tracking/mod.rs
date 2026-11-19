@@ -7,7 +7,7 @@ mod matrix;
 use crate::time::SimDuration;
 
 pub use filter::{AlphaBeta, Covariance6, KalmanCv, TrackState, Tracker};
-pub(crate) use manager::{BeamMotion, TrackManager, with_tracker};
+pub(crate) use manager::{BeamMotion, Coverage, TrackManager, with_tracker};
 pub use manager::{Track, TrackStatus};
 
 /// Which tracking filter a radar runs.

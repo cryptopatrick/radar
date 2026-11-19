@@ -167,6 +167,16 @@ pub(crate) struct BeamMotion {
     pub(crate) swept: f64,
 }
 
+/// How the beam covered a track's predicted position in one update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Coverage {
+    /// Inside the beam (plain illumination): decides dwell membership.
+    pub(crate) in_beam: bool,
+    /// Inside the beam by the track's own angular uncertainty: only such
+    /// coverage can make a dwell without a hit count as a miss.
+    pub(crate) confident: bool,
+}
+
 /// A run of consecutive updates in which a track was in the beam.
 #[derive(Debug, Clone, Copy, Default)]
 struct Dwell {
@@ -174,6 +184,9 @@ struct Dwell {
     swept: f64,
     /// Whether the dwell already produced a hit.
     hit: bool,
+    /// Whether the track was confidently illuminated during the dwell;
+    /// a dwell that never was records no outcome.
+    confident: bool,
 }
 
 /// One live track and its bookkeeping.
@@ -413,16 +426,17 @@ impl TrackManager {
     /// updates lifecycles and starts tracks, appending `TrackUpdated` for
     /// every created, updated or missed track (in id order; a track deleted
     /// by its miss is reported with status `Deleted`) and then
-    /// `TrackDeleted` for every deleted track (in id order). `covered(p, sigma)`
-    /// says whether the beam confidently illuminated a predicted position
-    /// `p` with position sigma `sigma` this update; only covered tracks can
-    /// miss.
+    /// `TrackDeleted` for every deleted track (in id order).
+    /// `covered(p, sigma)` reports how the beam covered a predicted position
+    /// `p` with position sigma `sigma` this update ([`Coverage`]).
     ///
-    /// With a sweeping scan, a track's consecutive in-beam updates form one
-    /// dwell with at most one outcome: the first associated measurement
-    /// updates the filter; later ones in the same dwell are absorbed (no
-    /// update, no new track); a miss is recorded when the dwell ends (the
-    /// track leaves the beam, or π has been swept) without a hit. Otherwise
+    /// With a sweeping scan, a track's consecutive in-beam updates (plain
+    /// coverage) form one dwell with at most one outcome: the first
+    /// associated measurement updates the filter; later ones in the same
+    /// dwell are absorbed (no update, no new track); when the dwell ends
+    /// (the track leaves the beam, or π has been swept) without a hit, a
+    /// miss is recorded only if the track was confidently covered at some
+    /// point in the dwell, otherwise there is no outcome. Otherwise
     /// every update is its own dwell.
     pub(crate) fn update(
         &mut self,
@@ -430,7 +444,7 @@ impl TrackManager {
         time: SimTime,
         beam: BeamMotion,
         measurements: &[Measurement],
-        covered: impl Fn(Vector3, f64) -> bool,
+        covered: impl Fn(Vector3, f64) -> Coverage,
         out: &mut Vec<Observation>,
     ) {
         // 1. Predict each track from its own last-hit time.
@@ -483,7 +497,7 @@ impl TrackManager {
         let mut kept = Vec::with_capacity(records.len() + measurements.len());
         for ((mut rec, pred), assignment) in records.drain(..).zip(predicted).zip(assigned) {
             let p_pred = Vector3::new(pred.x[0], pred.x[1], pred.x[2]);
-            let in_cover = covered(p_pred, pred.p.position_sigma());
+            let cover = covered(p_pred, pred.p.position_sigma());
             let mut delete = false;
             let mut reported = false;
             let mut applied = false;
@@ -494,10 +508,12 @@ impl TrackManager {
                 }
             };
             if beam.sweeping {
-                let in_beam = in_cover || assignment.is_some();
+                // Membership follows the plain beam; only confident coverage
+                // can turn a dwell without a hit into a miss.
+                let in_beam = cover.in_beam || assignment.is_some();
                 if let Some(d) = rec.dwell {
                     if !in_beam || d.swept >= PI {
-                        if !d.hit {
+                        if !d.hit && d.confident {
                             delete |= rec.miss(m_of_n, n);
                             reported = true;
                         }
@@ -507,6 +523,7 @@ impl TrackManager {
                 if in_beam {
                     let d = rec.dwell.get_or_insert_with(Dwell::default);
                     d.swept += beam.swept;
+                    d.confident |= cover.confident;
                     if assignment.is_some() && !d.hit {
                         d.hit = true;
                         on_hit(&mut rec, &mut delete);
@@ -516,7 +533,7 @@ impl TrackManager {
             } else if assignment.is_some() {
                 on_hit(&mut rec, &mut delete);
                 reported = true;
-            } else if in_cover {
+            } else if cover.confident {
                 delete |= rec.miss(m_of_n, n);
                 reported = true;
             }
@@ -587,6 +604,7 @@ impl TrackManager {
                 dwell: beam.sweeping.then_some(Dwell {
                     swept: beam.swept,
                     hit: true,
+                    confident: false,
                 }),
             };
             self.next_id += 1;

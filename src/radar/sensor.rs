@@ -27,7 +27,7 @@ use crate::random::sample::standard_normal;
 use crate::random::sample::{bernoulli, uniform01};
 use crate::sensor::{Observation, SensorContext, SensorModel};
 #[cfg(feature = "tracking")]
-use crate::tracking::{BeamMotion, Track, TrackManager, TrackerConfig, with_tracker};
+use crate::tracking::{BeamMotion, Coverage, Track, TrackManager, TrackerConfig, with_tracker};
 use crate::units::linear_to_db;
 #[cfg(feature = "ew")]
 use crate::world::EmitterState;
@@ -586,7 +586,18 @@ impl SensorModel for RadarSensor {
             let (antenna, dim) = (&self.cfg.antenna, self.cfg.dimension);
             let covered = |p: Vector3, position_sigma: f64| {
                 let (range, az, el) = frame.look_at(p);
-                confidently_illuminated(&sweep, az, el, range, position_sigma, antenna, dim)
+                Coverage {
+                    in_beam: illumination(&sweep, az, el, 0.0, antenna, dim).is_some(),
+                    confident: confidently_illuminated(
+                        &sweep,
+                        az,
+                        el,
+                        range,
+                        position_sigma,
+                        antenna,
+                        dim,
+                    ),
+                }
             };
             let beam = BeamMotion {
                 sweeping: matches!(

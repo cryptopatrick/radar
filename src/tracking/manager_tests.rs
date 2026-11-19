@@ -10,6 +10,19 @@ const STEPPED: BeamMotion = BeamMotion {
     sweeping: false,
     swept: 0.0,
 };
+const COVERED: Coverage = Coverage {
+    in_beam: true,
+    confident: true,
+};
+const OUTSIDE: Coverage = Coverage {
+    in_beam: false,
+    confident: false,
+};
+/// In the beam, but not by the track's own uncertainty (beam fringe).
+const FRINGE: Coverage = Coverage {
+    in_beam: true,
+    confident: false,
+};
 /// A sweeping scan moving 9° per update.
 const SWEEP: BeamMotion = BeamMotion {
     sweeping: true,
@@ -174,7 +187,7 @@ fn identity_majority_tie_smallest() {
             at(k as u64),
             STEPPED,
             std::slice::from_ref(&m),
-            |_, _| true,
+            |_, _| COVERED,
             &mut out,
         );
         let t = &mgr.tracks()[0];
@@ -195,7 +208,7 @@ fn m_of_n_confirms() {
             at(k),
             STEPPED,
             std::slice::from_ref(&m),
-            |_, _| true,
+            |_, _| COVERED,
             &mut out,
         );
     }
@@ -218,15 +231,15 @@ fn doomed_tentative_deleted_early() {
         at(0),
         STEPPED,
         std::slice::from_ref(&m),
-        |_, _| true,
+        |_, _| COVERED,
         &mut out,
     );
     for k in 1..3 {
-        mgr.update(&kalman(), at(k), STEPPED, &[], |_, _| true, &mut out);
+        mgr.update(&kalman(), at(k), STEPPED, &[], |_, _| COVERED, &mut out);
         assert_eq!(mgr.tracks()[0].status, TrackStatus::Tentative);
     }
     out.clear();
-    mgr.update(&kalman(), at(3), STEPPED, &[], |_, _| true, &mut out);
+    mgr.update(&kalman(), at(3), STEPPED, &[], |_, _| COVERED, &mut out);
     assert!(mgr.tracks().is_empty());
     assert!(matches!(&out[0], Observation::TrackUpdated(t) if t.status == TrackStatus::Deleted));
     assert!(matches!(
@@ -243,7 +256,13 @@ fn established_tracks_take_plots_before_tentatives() {
     let (pa, _) = polar_to_cartesian(&a);
     // Only the area around `a` is ever covered, so the tentative started
     // 200 m beyond it never misses and just grows stale.
-    let covered = |p: Vector3, _: f64| p.distance(pa) < 100.0;
+    let covered = |p: Vector3, _: f64| {
+        let c = p.distance(pa) < 100.0;
+        Coverage {
+            in_beam: c,
+            confident: c,
+        }
+    };
     mgr.update(
         &kalman(),
         at(0),
@@ -294,12 +313,12 @@ fn uncovered_tracks_are_not_missed() {
         at(0),
         STEPPED,
         std::slice::from_ref(&m),
-        |_, _| true,
+        |_, _| COVERED,
         &mut out,
     );
     out.clear();
     for k in 1..10 {
-        mgr.update(&kalman(), at(k), STEPPED, &[], |_, _| false, &mut out);
+        mgr.update(&kalman(), at(k), STEPPED, &[], |_, _| OUTSIDE, &mut out);
     }
     assert!(out.is_empty());
     let t = &mgr.tracks()[0];
@@ -318,7 +337,7 @@ fn greedy_assignment_and_ids() {
         at(0),
         STEPPED,
         &[a.clone(), b.clone()],
-        |_, _| true,
+        |_, _| COVERED,
         &mut out,
     );
     let ids: Vec<_> = updates(&out).iter().map(|t| t.id).collect();
@@ -331,7 +350,7 @@ fn greedy_assignment_and_ids() {
         at(1),
         STEPPED,
         &[b, a.clone()],
-        |_, _| true,
+        |_, _| COVERED,
         &mut out,
     );
     let ts = updates(&out);
@@ -346,7 +365,7 @@ fn greedy_assignment_and_ids() {
         at(2),
         STEPPED,
         &[meas(50_000.0, 3.0, None)],
-        |_, _| false,
+        |_, _| OUTSIDE,
         &mut out,
     );
     assert_eq!(updates(&out)[0].id, TrackId(3));
@@ -356,7 +375,7 @@ fn greedy_assignment_and_ids() {
         at(3),
         STEPPED,
         std::slice::from_ref(&a),
-        |_, _| true,
+        |_, _| COVERED,
         &mut out,
     );
     assert_eq!(mgr.tracks()[0].id, TrackId(1));
@@ -373,7 +392,7 @@ fn two_d_tracks_pin_vertical() {
             at(k),
             STEPPED,
             std::slice::from_ref(&m),
-            |_, _| true,
+            |_, _| COVERED,
             &mut out,
         );
     }
@@ -397,13 +416,13 @@ fn position_sigma_limit_deletes() {
         at(0),
         STEPPED,
         &[meas(1000.0, 1.0, None)],
-        |_, _| true,
+        |_, _| COVERED,
         &mut out,
     );
     out.clear();
     // 300 m/s velocity sigma: after 2 s the predicted sigma exceeds 500 m,
     // but a tentative track is exempt.
-    mgr.update(&kalman(), at(2), STEPPED, &[], |_, _| false, &mut out);
+    mgr.update(&kalman(), at(2), STEPPED, &[], |_, _| OUTSIDE, &mut out);
     assert!(out.is_empty());
     assert_eq!(mgr.tracks()[0].status, TrackStatus::Tentative);
     // Confirm it (hits at 0, 3, 4), then leave it unseen: once its predicted
@@ -415,13 +434,13 @@ fn position_sigma_limit_deletes() {
             at(k),
             STEPPED,
             std::slice::from_ref(&m),
-            |_, _| true,
+            |_, _| COVERED,
             &mut out,
         );
     }
     assert_eq!(mgr.tracks()[0].status, TrackStatus::Confirmed);
     out.clear();
-    mgr.update(&kalman(), at(200), STEPPED, &[], |_, _| false, &mut out);
+    mgr.update(&kalman(), at(200), STEPPED, &[], |_, _| OUTSIDE, &mut out);
     assert!(mgr.tracks().is_empty());
     assert_eq!(out.len(), 1);
     assert!(matches!(
@@ -450,27 +469,27 @@ fn dwell_absorbs_second_look_and_misses_once() {
     let m = meas(1000.0, 1.0, None);
     let one = std::slice::from_ref(&m);
     // Dwell 1: two consecutive looks, both detected → one hit, no new track.
-    mgr.update(&kalman(), at(0), SWEEP, one, |_, _| true, &mut out);
+    mgr.update(&kalman(), at(0), SWEEP, one, |_, _| COVERED, &mut out);
     out.clear();
-    mgr.update(&kalman(), at(1), SWEEP, one, |_, _| true, &mut out);
+    mgr.update(&kalman(), at(1), SWEEP, one, |_, _| COVERED, &mut out);
     assert!(out.is_empty(), "absorbed: {out:?}");
     let t = &mgr.tracks()[0];
     assert_eq!((mgr.tracks().len(), t.hits, t.last_update), (1, 1, at(0)));
     // Beam leaves: the dwell ended with a hit, so no miss.
-    mgr.update(&kalman(), at(2), SWEEP, &[], |_, _| false, &mut out);
+    mgr.update(&kalman(), at(2), SWEEP, &[], |_, _| OUTSIDE, &mut out);
     assert!(out.is_empty());
     // Dwell 2: two covered looks with no detection → one miss, at dwell end.
-    mgr.update(&kalman(), at(3), SWEEP, &[], |_, _| true, &mut out);
-    mgr.update(&kalman(), at(4), SWEEP, &[], |_, _| true, &mut out);
+    mgr.update(&kalman(), at(3), SWEEP, &[], |_, _| COVERED, &mut out);
+    mgr.update(&kalman(), at(4), SWEEP, &[], |_, _| COVERED, &mut out);
     assert!(out.is_empty());
-    mgr.update(&kalman(), at(5), SWEEP, &[], |_, _| false, &mut out);
+    mgr.update(&kalman(), at(5), SWEEP, &[], |_, _| OUTSIDE, &mut out);
     let ts = updates(&out);
     assert_eq!(ts.len(), 1);
     assert_eq!(ts[0].consecutive_misses, 1);
     // Dwell 3: miss on the first look, hit on the second → a hit.
     out.clear();
-    mgr.update(&kalman(), at(6), SWEEP, &[], |_, _| true, &mut out);
-    mgr.update(&kalman(), at(7), SWEEP, one, |_, _| true, &mut out);
+    mgr.update(&kalman(), at(6), SWEEP, &[], |_, _| COVERED, &mut out);
+    mgr.update(&kalman(), at(7), SWEEP, one, |_, _| COVERED, &mut out);
     let t = &updates(&out)[0];
     assert_eq!((t.hits, t.consecutive_misses), (2, 0));
 }
@@ -488,17 +507,17 @@ fn dwell_ends_after_half_turn() {
         at(0),
         half,
         &[meas(1000.0, 1.0, None)],
-        |_, _| true,
+        |_, _| COVERED,
         &mut out,
     );
     out.clear();
     // Covered throughout. Dwell 1 (hit) has swept 4 rad ≥ π by t = 2, so it
     // ends there; dwell 2 (t = 2, 3) ends at t = 4 without a hit: one miss.
     for k in 1..4 {
-        mgr.update(&kalman(), at(k), half, &[], |_, _| true, &mut out);
+        mgr.update(&kalman(), at(k), half, &[], |_, _| COVERED, &mut out);
     }
     assert!(out.is_empty(), "{out:?}");
-    mgr.update(&kalman(), at(4), half, &[], |_, _| true, &mut out);
+    mgr.update(&kalman(), at(4), half, &[], |_, _| COVERED, &mut out);
     assert_eq!(updates(&out)[0].consecutive_misses, 1);
 }
 
@@ -528,7 +547,7 @@ fn skipped_update_keeps_last_hit_state() {
         at(0),
         STEPPED,
         std::slice::from_ref(&m),
-        |_, _| true,
+        |_, _| COVERED,
         &mut out,
     );
     let before = mgr.tracks()[0].clone();
@@ -538,7 +557,7 @@ fn skipped_update_keeps_last_hit_state() {
         at(2),
         STEPPED,
         std::slice::from_ref(&m),
-        |_, _| true,
+        |_, _| COVERED,
         &mut out,
     );
     let after = &mgr.tracks()[0];
@@ -553,7 +572,7 @@ fn skipped_update_keeps_last_hit_state() {
         at(3),
         STEPPED,
         std::slice::from_ref(&m),
-        |_, _| true,
+        |_, _| COVERED,
         &mut out,
     );
     assert_eq!(mgr.tracks()[0].last_update, at(3));
@@ -586,4 +605,77 @@ fn distance_rejects_degenerate_covariance() {
         mgr2.distance2(&s, Vector3::new(1.0, 0.0, 0.0), &[[0.0; 3]; 3]),
         None
     );
+}
+
+/// A confirmed track with the beam away from it (the last dwell closed).
+fn confirmed_swept_track() -> (TrackManager, Measurement) {
+    let mut mgr = manager(Dimension::TwoD);
+    let mut out = Vec::new();
+    let m = meas(1000.0, 1.0, None);
+    for k in 0..3 {
+        let t = at(2 * k);
+        mgr.update(
+            &kalman(),
+            t,
+            SWEEP,
+            std::slice::from_ref(&m),
+            |_, _| COVERED,
+            &mut out,
+        );
+        mgr.update(
+            &kalman(),
+            at(2 * k + 1),
+            SWEEP,
+            &[],
+            |_, _| OUTSIDE,
+            &mut out,
+        );
+    }
+    assert_eq!(mgr.tracks()[0].status, TrackStatus::Confirmed);
+    (mgr, m)
+}
+
+#[test]
+fn fringe_detection_after_confident_look_is_one_hit() {
+    let (mut mgr, m) = confirmed_swept_track();
+    let mut out = Vec::new();
+    // One pass: a confident look without detection, then fringe looks, the
+    // second of which detects. Dwell membership follows the plain beam, so
+    // the pass is one dwell with one hit and no miss.
+    mgr.update(&kalman(), at(6), SWEEP, &[], |_, _| COVERED, &mut out);
+    mgr.update(&kalman(), at(7), SWEEP, &[], |_, _| FRINGE, &mut out);
+    mgr.update(
+        &kalman(),
+        at(8),
+        SWEEP,
+        std::slice::from_ref(&m),
+        |_, _| FRINGE,
+        &mut out,
+    );
+    mgr.update(&kalman(), at(9), SWEEP, &[], |_, _| OUTSIDE, &mut out);
+    let ts = updates(&out);
+    assert!(
+        ts.iter()
+            .all(|t| t.consecutive_misses == 0 && t.status == TrackStatus::Confirmed),
+        "{ts:?}"
+    );
+    assert_eq!(mgr.tracks()[0].hits, 4);
+    assert_eq!(mgr.tracks().len(), 1);
+}
+
+#[test]
+fn fringe_only_dwell_records_no_outcome() {
+    let (mut mgr, _) = confirmed_swept_track();
+    let mut out = Vec::new();
+    // A pass that only ever grazes the track: no hit, no miss.
+    mgr.update(&kalman(), at(6), SWEEP, &[], |_, _| FRINGE, &mut out);
+    mgr.update(&kalman(), at(7), SWEEP, &[], |_, _| FRINGE, &mut out);
+    mgr.update(&kalman(), at(8), SWEEP, &[], |_, _| OUTSIDE, &mut out);
+    assert!(out.is_empty(), "{out:?}");
+    assert_eq!(mgr.tracks()[0].consecutive_misses, 0);
+    // Stepped scans: a fringe look is no miss, a confident one is.
+    mgr.update(&kalman(), at(9), STEPPED, &[], |_, _| FRINGE, &mut out);
+    assert!(out.is_empty(), "{out:?}");
+    mgr.update(&kalman(), at(10), STEPPED, &[], |_, _| COVERED, &mut out);
+    assert_eq!(updates(&out)[0].consecutive_misses, 1);
 }
