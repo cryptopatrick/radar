@@ -1,6 +1,8 @@
 //! The simulation: sensors, the world snapshot, scheduling and observation
 //! queues.
 
+#[cfg(feature = "diagnostics")]
+use crate::diagnostics::DiagnosticRecord;
 use crate::environment::{Environment, OpenSky};
 use crate::error::RadarError;
 use crate::geometry::{Pose3, wrap_two_pi};
@@ -404,6 +406,18 @@ impl Simulation {
     pub fn drain(&mut self, id: SensorId, out: &mut Vec<Observation>) -> Result<(), RadarError> {
         out.append(&mut self.entry(id)?.queue);
         Ok(())
+    }
+
+    /// Appends the ground-truth records of every radar to `out`, in sensor
+    /// id order, and clears them: one per (update, target) in target order
+    /// plus one per false alarm. Records accumulate until drained.
+    #[cfg(feature = "diagnostics")]
+    pub fn drain_diagnostics(&mut self, out: &mut Vec<DiagnosticRecord>) {
+        for e in self.sensors.values_mut() {
+            if let SensorKind::Radar(r) = &mut e.kind {
+                r.drain_diagnostics(out);
+            }
+        }
     }
 
     /// The sensor's beam and scheduling state.

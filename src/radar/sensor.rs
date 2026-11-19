@@ -1,6 +1,8 @@
 //! The radar as a [`SensorModel`]: scan, detect, measure, identify,
 //! report jamming strobes, track.
 
+#[cfg(feature = "diagnostics")]
+use crate::diagnostics::{DiagnosticOutcome, DiagnosticRecord};
 use crate::error::RadarError;
 #[cfg(feature = "ew")]
 use crate::ew::{jammer_jnr, strobe_sigma};
@@ -68,6 +70,9 @@ struct Pending {
     measurement: Measurement,
     transponder: Option<TransponderCode>,
     true_range: f64,
+    /// Index of this detection's record in the update's diagnostics.
+    #[cfg(feature = "diagnostics")]
+    diag: usize,
 }
 
 /// A radar driven by a [`RadarConfig`].
@@ -80,6 +85,9 @@ pub(crate) struct RadarSensor {
     /// Track manager, unless the tracker is [`TrackerConfig::None`].
     #[cfg(feature = "tracking")]
     tracks: Option<TrackManager>,
+    /// Ground-truth records awaiting [`Self::drain_diagnostics`].
+    #[cfg(feature = "diagnostics")]
+    diagnostics: Vec<DiagnosticRecord>,
 }
 
 impl RadarSensor {
@@ -108,7 +116,15 @@ impl RadarSensor {
             snr_constant,
             #[cfg(feature = "tracking")]
             tracks,
+            #[cfg(feature = "diagnostics")]
+            diagnostics: Vec::new(),
         }
+    }
+
+    /// Moves the queued diagnostic records to `out`.
+    #[cfg(feature = "diagnostics")]
+    pub(crate) fn drain_diagnostics(&mut self, out: &mut Vec<DiagnosticRecord>) {
+        out.append(&mut self.diagnostics);
     }
 
     /// Snapshots of the live tracks (empty without a tracker).
@@ -137,6 +153,8 @@ impl RadarSensor {
     /// Returns the scan to its initial state and drops every track.
     pub(crate) fn reset(&mut self) {
         self.state = initial_state(&self.cfg.scan);
+        #[cfg(feature = "diagnostics")]
+        self.diagnostics.clear();
         #[cfg(feature = "tracking")]
         if let Some(t) = &mut self.tracks {
             t.reset();
@@ -338,7 +356,29 @@ impl RadarSensor {
         sweep: &Sweep,
         jamming: impl Fn(Option<PlatformId>, f64, f64) -> f64,
         pending: &mut Vec<Pending>,
+        #[cfg(feature = "diagnostics")] diag: &mut Vec<DiagnosticRecord>,
     ) {
+        #[cfg(feature = "diagnostics")]
+        let (diag_sensor, diag_time) = (ctx.sensor, ctx.time);
+        #[cfg(feature = "diagnostics")]
+        let mut record = |target: &crate::world::TargetState,
+                          range: f64,
+                          outcome: DiagnosticOutcome,
+                          result: Option<&DetectionResult>| {
+            diag.push(DiagnosticRecord {
+                sensor: diag_sensor,
+                time: diag_time,
+                target: Some(target.id),
+                true_range: Some(range),
+                snr_db: result
+                    .and_then(|r| r.measured_snr.or(r.mean_snr))
+                    .map(linear_to_db),
+                pd: result.map(|r| r.probability),
+                outcome,
+                measurement: None,
+            });
+            diag.len() - 1
+        };
         let world = ctx.world;
         let limits = self.cfg.limits;
         for target in &world.targets {
@@ -349,6 +389,8 @@ impl RadarSensor {
             let rel = p_target - frame.position;
             let (range, az_s, el_s) = frame.look_at(p_target);
             if !(range >= limits.min_range && range <= limits.instrumented_range) {
+                #[cfg(feature = "diagnostics")]
+                record(target, range, DiagnosticOutcome::OutOfRange, None);
                 continue;
             }
             let Some((off_az, off_el)) = illumination(
@@ -359,12 +401,16 @@ impl RadarSensor {
                 &self.cfg.antenna,
                 self.cfg.dimension,
             ) else {
+                #[cfg(feature = "diagnostics")]
+                record(target, range, DiagnosticOutcome::OutOfBeam, None);
                 continue;
             };
             if ctx
                 .environment
                 .line_of_sight_blocked(frame.position, p_target)
             {
+                #[cfg(feature = "diagnostics")]
+                record(target, range, DiagnosticOutcome::Occluded, None);
                 continue;
             }
             let look = DetectionContext {
@@ -376,8 +422,12 @@ impl RadarSensor {
             };
             let result = self.detect(&look, &mut *ctx.rng);
             if !result.detected {
+                #[cfg(feature = "diagnostics")]
+                record(target, range, DiagnosticOutcome::Missed, Some(&result));
                 continue;
             }
+            #[cfg(feature = "diagnostics")]
+            let diag_index = record(target, range, DiagnosticOutcome::Detected, Some(&result));
             let rv = self.cfg.doppler.then(|| {
                 let unit = rel.normalized().unwrap_or(Vector3::ZERO);
                 (target.velocity - ctx.platform.velocity).dot(unit)
@@ -388,6 +438,8 @@ impl RadarSensor {
                 measurement,
                 transponder: target.transponder,
                 true_range: range,
+                #[cfg(feature = "diagnostics")]
+                diag: diag_index,
             });
         }
     }
@@ -480,10 +532,38 @@ impl SensorModel for RadarSensor {
 
         // Draw order: targets, false alarms, identification, strobes, tracking.
         let mut pending = Vec::new();
-        self.detect_targets(ctx, frame, &sweep, jamming, &mut pending);
+        #[cfg(feature = "diagnostics")]
+        let mut diag = Vec::new();
+        self.detect_targets(
+            ctx,
+            frame,
+            &sweep,
+            jamming,
+            &mut pending,
+            #[cfg(feature = "diagnostics")]
+            &mut diag,
+        );
         let mut false_alarms = Vec::new();
         self.false_alarms(ctx, frame, &sweep, &mut false_alarms);
         self.identify(ctx, &mut pending);
+        // Truth is linked before the sort below, which erases the order.
+        #[cfg(feature = "diagnostics")]
+        {
+            for p in &pending {
+                diag[p.diag].measurement = Some(p.measurement.clone());
+            }
+            diag.extend(false_alarms.iter().map(|m| DiagnosticRecord {
+                sensor: ctx.sensor,
+                time: ctx.time,
+                target: None,
+                true_range: None,
+                snr_db: m.snr_db,
+                pd: None,
+                outcome: DiagnosticOutcome::FalseAlarm,
+                measurement: Some(m.clone()),
+            }));
+            self.diagnostics.append(&mut diag);
+        }
         #[cfg(feature = "ew")]
         let mut strobes = self.strobes(ctx, frame, &sweep, &jammers);
 

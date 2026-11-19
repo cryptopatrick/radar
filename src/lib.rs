@@ -1,6 +1,8 @@
 //! Realistic radar and sensor simulation for games and simulations.
 #![warn(missing_docs)]
 
+#[cfg(feature = "diagnostics")]
+pub mod diagnostics;
 pub mod environment;
 pub mod error;
 #[cfg(feature = "ew")]
@@ -19,6 +21,8 @@ pub mod world;
 
 /// Convenient re-exports of the most common types.
 pub mod prelude {
+    #[cfg(feature = "diagnostics")]
+    pub use crate::diagnostics::{DiagnosticOutcome, DiagnosticRecord};
     pub use crate::environment::{Environment, OpenSky};
     pub use crate::error::RadarError;
     pub use crate::geometry::{Pose3, Rotation3, Vector2, Vector3};
