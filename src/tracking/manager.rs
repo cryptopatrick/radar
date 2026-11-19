@@ -196,7 +196,8 @@ struct Record {
 
 impl Record {
     /// Records one dwell outcome in the M-of-N window and applies
-    /// confirmation; returns true if a tentative track fails M-of-N.
+    /// confirmation; returns true if a tentative track fails M-of-N, i.e.
+    /// can no longer reach M hits within its first N outcomes.
     fn record(&mut self, hit: bool, m: u32, n: u32) -> bool {
         self.window.push_back(hit);
         while self.window.len() > n as usize {
@@ -210,7 +211,9 @@ impl Record {
             self.status = TrackStatus::Confirmed;
             false
         } else {
-            self.window.len() >= n as usize
+            // Fails as soon as the outcomes left in the window cannot reach M.
+            let remaining = (n as usize).saturating_sub(self.window.len());
+            hits + remaining < m as usize
         }
     }
 
@@ -441,21 +444,31 @@ impl TrackManager {
         let converted: Vec<(Vector3, [[f64; 3]; 3])> =
             measurements.iter().map(polar_to_cartesian).collect();
 
-        // 2–3. Gate, then assign greedily by (d², track id, measurement index).
+        // 2–3. Gate, then assign greedily in two passes: established
+        // (Confirmed/Coasting) tracks first, then Tentative ones, each by
+        // (d², track id, measurement index). A stale tentative's wide
+        // covariance gives it small d², so it must not compete with
+        // established tracks for their plots.
         let mut pairs = Vec::new();
         for (ti, (t, s)) in self.tracks.iter().zip(&predicted).enumerate() {
+            let tentative = t.status == TrackStatus::Tentative;
             for (mi, (z, r)) in converted.iter().enumerate() {
                 if let Some(d2) = self.distance2(s, *z, r) {
                     if d2 <= self.gate {
-                        pairs.push((d2, t.id, mi, ti));
+                        pairs.push((tentative, d2, t.id, mi, ti));
                     }
                 }
             }
         }
-        pairs.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        pairs.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(a.1.total_cmp(&b.1))
+                .then(a.2.cmp(&b.2))
+                .then(a.3.cmp(&b.3))
+        });
         let mut assigned: Vec<Option<usize>> = vec![None; self.tracks.len()];
         let mut used = vec![false; measurements.len()];
-        for (_, _, mi, ti) in pairs {
+        for (_, _, _, mi, ti) in pairs {
             if assigned[ti].is_none() && !used[mi] {
                 assigned[ti] = Some(mi);
                 used[mi] = true;

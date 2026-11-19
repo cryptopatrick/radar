@@ -184,7 +184,7 @@ fn identity_majority_tie_smallest() {
 }
 
 #[test]
-fn m_of_n_confirms_and_tentative_dies() {
+fn m_of_n_confirms() {
     let mut mgr = manager(Dimension::TwoD);
     let mut out = Vec::new();
     let m = meas(1000.0, 1.0, None);
@@ -204,10 +204,15 @@ fn m_of_n_confirms_and_tentative_dies() {
         (t.status, t.hits, t.id),
         (TrackStatus::Confirmed, 3, TrackId(1))
     );
+}
 
-    // A single hit then four covered misses: window [H, M, M, M, M] → deleted.
+#[test]
+fn doomed_tentative_deleted_early() {
+    // 3 of 5: after [H, M, M] three hits are still reachable; after
+    // [H, M, M, M] they are not, so the track goes on its third miss.
     let mut mgr = manager(Dimension::TwoD);
-    out.clear();
+    let mut out = Vec::new();
+    let m = meas(1000.0, 1.0, None);
     mgr.update(
         &kalman(),
         at(0),
@@ -216,18 +221,67 @@ fn m_of_n_confirms_and_tentative_dies() {
         |_| true,
         &mut out,
     );
-    for k in 1..4 {
+    for k in 1..3 {
         mgr.update(&kalman(), at(k), STEPPED, &[], |_| true, &mut out);
         assert_eq!(mgr.tracks()[0].status, TrackStatus::Tentative);
     }
     out.clear();
-    mgr.update(&kalman(), at(4), STEPPED, &[], |_| true, &mut out);
+    mgr.update(&kalman(), at(3), STEPPED, &[], |_| true, &mut out);
     assert!(mgr.tracks().is_empty());
     assert!(matches!(&out[0], Observation::TrackUpdated(t) if t.status == TrackStatus::Deleted));
     assert!(matches!(
         out[1],
         Observation::TrackDeleted { id: TrackId(1), .. }
     ));
+}
+
+#[test]
+fn established_tracks_take_plots_before_tentatives() {
+    let mut mgr = manager(Dimension::TwoD);
+    let mut out = Vec::new();
+    let a = meas(1000.0, 1.0, None);
+    let (pa, _) = polar_to_cartesian(&a);
+    // Only the area around `a` is ever covered, so the tentative started
+    // 200 m beyond it never misses and just grows stale.
+    let covered = |p: Vector3| p.distance(pa) < 100.0;
+    mgr.update(
+        &kalman(),
+        at(0),
+        STEPPED,
+        &[a.clone(), meas(1200.0, 1.0, None)],
+        covered,
+        &mut out,
+    );
+    for k in 1..3 {
+        mgr.update(
+            &kalman(),
+            at(k),
+            STEPPED,
+            std::slice::from_ref(&a),
+            covered,
+            &mut out,
+        );
+    }
+    let ts = mgr.tracks();
+    assert_eq!(ts[0].status, TrackStatus::Confirmed);
+    assert_eq!((ts[1].status, ts[1].hits), (TrackStatus::Tentative, 1));
+    // 30 s later a plot 40 m beyond `a`: the stale tentative (≈9 km sigma)
+    // has the smaller d², but the confirmed track gates it and wins.
+    let plot = meas(1040.0, 1.0, None);
+    out.clear();
+    mgr.update(
+        &kalman(),
+        at(32),
+        STEPPED,
+        std::slice::from_ref(&plot),
+        covered,
+        &mut out,
+    );
+    let ts = mgr.tracks();
+    assert_eq!((ts[0].status, ts[0].hits), (TrackStatus::Confirmed, 4));
+    assert_eq!(ts[0].consecutive_misses, 0);
+    assert_eq!(ts[1].hits, 1);
+    assert_eq!(ts.len(), 2, "no new track: {ts:?}");
 }
 
 #[test]

@@ -88,7 +88,7 @@ fn observation_stream_is_pinned() {
     assert!(obs.iter().any(|o| matches!(o, Observation::Measurement(_))));
     let h = fnv1a(&obs);
     #[cfg(feature = "tracking")]
-    const EXPECTED: u64 = 0xe5c0_727c_e136_06c1;
+    const EXPECTED: u64 = 0x9d1f_0a0e_f2e5_416f;
     #[cfg(not(feature = "tracking"))]
     const EXPECTED: u64 = 0xf711_37d6_21fe_9117;
     assert_eq!(h, EXPECTED, "stream hash {h:#x}");
