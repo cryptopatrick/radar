@@ -33,6 +33,14 @@ proptest = "1"
 approx = "0.5"
 criterion = "0.8"
 
-# [[bench]]
-# name = "radar_2d"
-# harness = false
+[[bench]]
+name = "radar_2d"
+harness = false
+
+[[example]]
+name = "basic_2d"
+required-features = ["tracking"]
+
+[[example]]
+name = "multi_sensor"
+required-features = ["tracking"]

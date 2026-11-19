@@ -29,10 +29,11 @@ pub mod prelude {
     pub use crate::ids::{EmitterId, PlatformId, SensorId, TargetId, TrackId, TransponderCode};
     pub use crate::radar::{
         BeamPattern, Calibration, DetectionConfig, DetectionContext, DetectionModel,
-        DetectionResult, Dimension, Measurement, MeasurementConfig, MeasurementSigma, RadarConfig,
-        RangeLimits, ScanConfig, ScanFrame,
+        DetectionResult, Dimension, IdentificationConfig, Measurement, MeasurementConfig,
+        MeasurementSigma, RadarConfig, RangeEquationDetector, RangeLimits, ScanConfig, ScanFrame,
+        analytic_pd,
     };
-    pub use crate::random::{RandomSource, RandomSourceFactory, Seed, StreamId};
+    pub use crate::random::{ChaChaStream, RandomSource, RandomSourceFactory, Seed, StreamId};
     pub use crate::sensor::{Observation, SensorContext, SensorModel};
     pub use crate::simulation::{SensorStatus, Simulation, SimulationConfig, StepPolicy};
     pub use crate::time::{SimDuration, SimTime};
