@@ -366,15 +366,13 @@ fn noise_free_3d_keeps_one_track() {
     let cfg = RadarConfig::builder()
         .dimension(Dimension::ThreeD)
         .detection(DetectionConfig::Radius {
-            range: 20_000.0,
+            range: 2_000.0,
             pd: 1.0,
             false_alarms_per_scan: 0.0,
         })
-        // Long enough that the default sigma limit (2 km) keeps a fresh
-        // tentative track through the 1 s revisit.
         .limits(RangeLimits {
             min_range: 0.0,
-            instrumented_range: 20_000.0,
+            instrumented_range: 2_000.0,
         })
         .tracker(TrackerConfig::Kalman {
             process_accel_sigma: 0.0,
@@ -391,4 +389,25 @@ fn noise_free_3d_keeps_one_track() {
     assert_eq!(ts[0].id, TrackId(1));
     assert_eq!(ts[0].status, TrackStatus::Confirmed);
     assert!(ts[0].hits >= 19, "hits {}", ts[0].hits);
+}
+
+#[test]
+fn simple_2d_short_range_confirms() {
+    // 100 m sigma limit, 1 s revisit: a fresh track's predicted sigma
+    // (300 m/s initial velocity sigma) exceeds it before the second look.
+    let mut cfg = RadarConfig::simple_2d(1_000.0).unwrap();
+    cfg.tracker = TrackerConfig::Kalman {
+        process_accel_sigma: 1.0,
+    };
+    let mut sim = sim_with(
+        cfg,
+        vec![target(
+            Vector3::new(0.0, 500.0, 0.0),
+            Vector3::new(10.0, 0.0, 0.0),
+        )],
+    );
+    run(&mut sim, 100, &OpenSky);
+    let c = confirmed(&sim);
+    assert_eq!(c.len(), 1, "{:?}", sim.tracks(RADAR).unwrap());
+    assert_eq!(c[0].id, TrackId(1));
 }

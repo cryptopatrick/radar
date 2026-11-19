@@ -341,8 +341,27 @@ fn position_sigma_limit_deletes() {
         &mut out,
     );
     out.clear();
-    // 300 m/s velocity sigma: after 2 s the predicted sigma exceeds 500 m.
+    // 300 m/s velocity sigma: after 2 s the predicted sigma exceeds 500 m,
+    // but a tentative track is exempt.
     mgr.update(&kalman(), at(2), STEPPED, &[], |_| false, &mut out);
+    assert!(out.is_empty());
+    assert_eq!(mgr.tracks()[0].status, TrackStatus::Tentative);
+    // Confirm it (hits at 0, 3, 4), then leave it unseen: once its predicted
+    // sigma exceeds 500 m it is deleted.
+    let m = meas(1000.0, 1.0, None);
+    for k in 3..5 {
+        mgr.update(
+            &kalman(),
+            at(k),
+            STEPPED,
+            std::slice::from_ref(&m),
+            |_| true,
+            &mut out,
+        );
+    }
+    assert_eq!(mgr.tracks()[0].status, TrackStatus::Confirmed);
+    out.clear();
+    mgr.update(&kalman(), at(200), STEPPED, &[], |_| false, &mut out);
     assert!(mgr.tracks().is_empty());
     assert_eq!(out.len(), 1);
     assert!(matches!(

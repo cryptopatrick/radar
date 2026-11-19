@@ -64,8 +64,11 @@ pub struct TrackManagementConfig {
     pub gate_probability: f64,
     /// Initial velocity sigma of a new track, m/s.
     pub initial_velocity_sigma: f64,
-    /// Position sigma above which a track is deleted, m; `None` means
-    /// `instrumented_range / 10`.
+    /// Position sigma above which a Confirmed or Coasting track is deleted,
+    /// m; `None` means `instrumented_range / 10`. Tentative tracks are not
+    /// subject to it (their fresh velocity uncertainty would exceed it before
+    /// a second look on short-range radars): M-of-N alone governs them, and
+    /// any track with a non-finite covariance is deleted.
     pub max_position_sigma: Option<f64>,
 }
 

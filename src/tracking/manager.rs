@@ -500,9 +500,12 @@ impl TrackManager {
             } else {
                 pred.p.position_sigma()
             };
+            // The sigma limit applies to established tracks only; tentative
+            // tracks are governed by M-of-N (and a non-finite covariance).
+            let established = rec.status != TrackStatus::Tentative;
             delete |= rec.consecutive_misses >= self.mgmt.max_coast
-                || sigma.is_nan()
-                || sigma > self.max_position_sigma;
+                || !sigma.is_finite()
+                || (established && sigma > self.max_position_sigma);
             if delete {
                 rec.status = TrackStatus::Deleted;
                 deleted.push(rec.id);
