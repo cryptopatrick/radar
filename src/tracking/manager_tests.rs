@@ -44,7 +44,13 @@ fn kalman() -> KalmanCv {
 }
 
 fn manager(dim: Dimension) -> TrackManager {
-    TrackManager::new(&TrackManagementConfig::default(), dim, SENSOR, 100_000.0)
+    TrackManager::new(
+        &TrackManagementConfig::default(),
+        dim,
+        SENSOR,
+        100_000.0,
+        1e9,
+    )
 }
 
 fn at(secs: u64) -> SimTime {
@@ -330,7 +336,7 @@ fn position_sigma_limit_deletes() {
         max_position_sigma: Some(500.0),
         ..TrackManagementConfig::default()
     };
-    let mut mgr = TrackManager::new(&cfg, Dimension::TwoD, SENSOR, 100_000.0);
+    let mut mgr = TrackManager::new(&cfg, Dimension::TwoD, SENSOR, 100_000.0, 1e9);
     let mut out = Vec::new();
     mgr.update(
         &kalman(),

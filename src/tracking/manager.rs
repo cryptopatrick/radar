@@ -245,6 +245,8 @@ pub(crate) struct TrackManager {
     /// χ² gate threshold on d².
     gate: f64,
     max_position_sigma: f64,
+    /// Tentative tracks unhit for longer than this (s) are deleted.
+    tentative_max_age: f64,
     next_id: u64,
     /// Live tracks in ascending id order.
     tracks: Vec<Record>,
@@ -252,12 +254,15 @@ pub(crate) struct TrackManager {
 
 impl TrackManager {
     /// Creates an empty manager. `instrumented_range` sets the default
-    /// position-sigma limit (a tenth of it).
+    /// position-sigma limit (a tenth of it); a tentative track is deleted
+    /// once more than `(confirm_n + 1) × nominal_revisit` seconds pass since
+    /// its last hit.
     pub(crate) fn new(
         mgmt: &TrackManagementConfig,
         dim: Dimension,
         sensor: SensorId,
         instrumented_range: f64,
+        nominal_revisit: f64,
     ) -> Self {
         let dof = if dim == Dimension::TwoD { 2 } else { 3 };
         Self {
@@ -266,6 +271,7 @@ impl TrackManager {
             mgmt: mgmt.clone(),
             gate: chi2_gate(mgmt.gate_probability, dof),
             max_position_sigma: mgmt.max_position_sigma.unwrap_or(instrumented_range / 10.0),
+            tentative_max_age: f64::from(mgmt.confirm_n.saturating_add(1)) * nominal_revisit,
             next_id: 1,
             tracks: Vec::new(),
         }
@@ -502,10 +508,15 @@ impl TrackManager {
             };
             // The sigma limit applies to established tracks only; tentative
             // tracks are governed by M-of-N (and a non-finite covariance).
+            // Tentative tracks the beam no longer visits age out instead.
             let established = rec.status != TrackStatus::Tentative;
+            let age = time
+                .duration_since(rec.time)
+                .map_or(0.0, |d| d.as_secs_f64());
             delete |= rec.consecutive_misses >= self.mgmt.max_coast
                 || !sigma.is_finite()
-                || (established && sigma > self.max_position_sigma);
+                || (established && sigma > self.max_position_sigma)
+                || (!established && age > self.tentative_max_age);
             if delete {
                 rec.status = TrackStatus::Deleted;
                 deleted.push(rec.id);

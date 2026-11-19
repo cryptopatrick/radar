@@ -67,8 +67,10 @@ pub struct TrackManagementConfig {
     /// Position sigma above which a Confirmed or Coasting track is deleted,
     /// m; `None` means `instrumented_range / 10`. Tentative tracks are not
     /// subject to it (their fresh velocity uncertainty would exceed it before
-    /// a second look on short-range radars): M-of-N alone governs them, and
-    /// any track with a non-finite covariance is deleted.
+    /// a second look on short-range radars): M-of-N governs them, and a
+    /// tentative track unhit for more than `(confirm_n + 1)` nominal scan
+    /// revisits is deleted. Any track with a non-finite covariance is
+    /// deleted.
     pub max_position_sigma: Option<f64>,
 }
 

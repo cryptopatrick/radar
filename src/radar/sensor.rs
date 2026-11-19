@@ -77,6 +77,7 @@ impl RadarSensor {
                 cfg.dimension,
                 id,
                 cfg.limits.instrumented_range,
+                cfg.scan.nominal_revisit(cfg.update_period),
             )
         });
         Self {

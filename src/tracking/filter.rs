@@ -253,13 +253,20 @@ impl Tracker for KalmanCv {
 }
 
 /// Alpha-beta filter. Its covariance is approximate: after an update each
-/// block is the steady-state value `P_pos = α·R`, `P_vel = (β/dt)²·R`, or,
-/// while the start-up transient dominates, the predicted block scaled by
-/// `ρ²`, whichever has the larger trace. `ρ` is the spectral radius of the
-/// closed loop `λ² − (2 − α − β)·λ + (1 − α) = 0`, the rate at which
-/// estimate errors decay. Cross terms are zero; `dt` is the track's
-/// [`TrackState::elapsed`] (1 s if that is not finite and positive). Radial
-/// velocity is ignored.
+/// block is the larger (by trace) of the nominal value `P_pos = α·R`,
+/// `P_vel = (β/dt)²·R` and the predicted block scaled by `ρ²`, where `ρ` is
+/// the spectral radius of the closed loop
+/// `λ² − (2 − α − β)·λ + (1 − α) = 0` (the rate at which estimate errors
+/// decay). This keeps a fresh track's large start-up uncertainty while it
+/// decays. Cross terms are zero; `dt` is the track's
+/// [`TrackState::elapsed`] (1 s if that is not finite and positive).
+///
+/// With a constant `dt`, the velocity block settles at `(β/dt)²·R`. The
+/// position block settles at `α·R` only if `ρ²·(α + β²) ≤ α` (roughly
+/// `β ≲ α`, e.g. α = 0.3, β = 0.05). Otherwise it settles at the larger,
+/// conservative fixed point `ρ²·β²·R / (1 − ρ²)`: for α = 0.2, β = 0.5
+/// (`ρ² = 0.8`) that is `1.0·R` rather than `0.2·R`. Radial velocity is
+/// ignored.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AlphaBeta {
     /// Position gain, in `(0, 1]`.
@@ -539,6 +546,25 @@ mod tests {
         let want = 0.5 * s.p.get(3, 3);
         assert!((u.p.get(3, 3) - want).abs() < 1e-6 * want);
         assert!(u.p.get(3, 3) > (0.3 / 4.0_f64).powi(2) * 25.0);
+    }
+
+    #[test]
+    fn alpha_beta_position_fixed_point() {
+        let run = |alpha: f64, beta: f64| {
+            let ab = AlphaBeta { alpha, beta };
+            let mut s = initial(START);
+            for _ in 0..500 {
+                s = ab.update_position(&ab.predict(&s, 1.0), START, diag(25.0));
+            }
+            (s.p.get(0, 0) / 25.0, s.p.get(3, 3) / 25.0)
+        };
+        // β ≲ α: back to the nominal α·R and β²·R.
+        let (pos, vel) = run(0.5, 0.3);
+        assert!((pos - 0.5).abs() < 1e-9 && (vel - 0.09).abs() < 1e-9);
+        // ρ²(α + β²) > α: conservative fixed point ρ²β²/(1 − ρ²) = 1.0.
+        let (pos, vel) = run(0.2, 0.5);
+        assert!((pos - 1.0).abs() < 1e-6, "pos {pos}");
+        assert!((vel - 0.25).abs() < 1e-9);
     }
 
     #[test]

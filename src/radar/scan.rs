@@ -3,6 +3,7 @@
 use crate::geometry::angle::{wrap_pi, wrap_two_pi};
 use crate::radar::antenna::AntennaConfig;
 use crate::radar::config::Dimension;
+use crate::time::SimDuration;
 use std::f64::consts::{PI, TAU};
 
 /// Tolerance absorbing float rounding in completion and edge tests.
@@ -127,6 +128,36 @@ impl ScanConfig {
             },
             ScanConfig::Custom(_) => return None,
         })
+    }
+
+    /// Nominal time (s) between looks at a given direction: Circular
+    /// `2π/rate`; Volume `bars·2π/rate`; Sector `2·width/rate`; Raster
+    /// `2·rows·span/rate` (approximate); Fixed, Steered and Custom
+    /// `update_period`. A non-finite or non-positive result falls back to
+    /// `update_period`.
+    #[cfg_attr(not(feature = "tracking"), allow(dead_code))]
+    pub(crate) fn nominal_revisit(&self, update_period: SimDuration) -> f64 {
+        let period = update_period.as_secs_f64();
+        let revisit = match self {
+            ScanConfig::Circular { rate, .. } => TAU / rate,
+            ScanConfig::Volume {
+                elevation_bars,
+                rate,
+            } => elevation_bars.len() as f64 * TAU / rate,
+            ScanConfig::Sector { width, rate, .. } => 2.0 * width / rate,
+            ScanConfig::Raster {
+                azimuth_span,
+                rows,
+                rate,
+                ..
+            } => 2.0 * f64::from(*rows) * azimuth_span / rate,
+            ScanConfig::Fixed { .. } | ScanConfig::Steered { .. } | ScanConfig::Custom(_) => period,
+        };
+        if revisit.is_finite() && revisit > 0.0 {
+            revisit
+        } else {
+            period
+        }
     }
 }
 
@@ -762,5 +793,71 @@ mod tests {
         let s = advance(&mut cfg, &mut state, 1.0);
         assert_eq!(s.delta_azimuth, 0.0);
         assert!(state.elevation.is_finite());
+    }
+
+    #[test]
+    fn nominal_revisit_per_variant() {
+        let p = SimDuration::from_millis(100);
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-12;
+        let circ = ScanConfig::Circular {
+            rate: PI,
+            elevation: 0.0,
+        };
+        assert!(close(circ.nominal_revisit(p), 2.0));
+        let vol = ScanConfig::Volume {
+            elevation_bars: vec![0.0, 0.1, 0.2],
+            rate: TAU,
+        };
+        assert!(close(vol.nominal_revisit(p), 3.0));
+        let sector = ScanConfig::Sector {
+            centre: 0.0,
+            width: 1.0,
+            rate: 0.5,
+            elevation: 0.0,
+        };
+        assert!(close(sector.nominal_revisit(p), 4.0));
+        let raster = ScanConfig::Raster {
+            azimuth_centre: 0.0,
+            azimuth_span: 1.0,
+            elevation_low: 0.0,
+            elevation_high: 0.2,
+            rows: 3,
+            rate: 2.0,
+        };
+        assert!(close(raster.nominal_revisit(p), 3.0));
+        let fixed = ScanConfig::Fixed {
+            azimuth: 0.0,
+            elevation: 0.0,
+        };
+        assert!(close(fixed.nominal_revisit(p), 0.1));
+        let steered = ScanConfig::Steered { max_slew_rate: 1.0 };
+        assert!(close(steered.nominal_revisit(p), 0.1));
+        let custom = ScanConfig::Custom(Box::new(Stuck));
+        assert!(close(custom.nominal_revisit(p), 0.1));
+        // Degenerate values fall back to the update period.
+        let zero = ScanConfig::Circular {
+            rate: 0.0,
+            elevation: 0.0,
+        };
+        assert!(close(zero.nominal_revisit(p), 0.1));
+        let empty = ScanConfig::Volume {
+            elevation_bars: vec![],
+            rate: TAU,
+        };
+        assert!(close(empty.nominal_revisit(p), 0.1));
+    }
+
+    /// A custom pattern that never moves.
+    #[derive(Debug)]
+    struct Stuck;
+    impl ScanPattern for Stuck {
+        fn advance(&mut self, _state: &mut ScanState, _dt_secs: f64) -> Sweep {
+            Sweep {
+                start_azimuth: 0.0,
+                delta_azimuth: 0.0,
+                elevation: 0.0,
+                completed: false,
+            }
+        }
     }
 }

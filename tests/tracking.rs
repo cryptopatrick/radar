@@ -411,3 +411,54 @@ fn simple_2d_short_range_confirms() {
     assert_eq!(c.len(), 1, "{:?}", sim.tracks(RADAR).unwrap());
     assert_eq!(c[0].id, TrackId(1));
 }
+
+#[test]
+fn steered_away_tentative_ages_out() {
+    let cfg = RadarConfig::builder()
+        .scan(ScanConfig::Steered {
+            max_slew_rate: std::f64::consts::PI,
+        })
+        .detection(DetectionConfig::Radius {
+            range: 2_000.0,
+            pd: 1.0,
+            false_alarms_per_scan: 0.0,
+        })
+        .limits(RangeLimits {
+            min_range: 0.0,
+            instrumented_range: 2_000.0,
+        })
+        .tracker(TrackerConfig::Kalman {
+            process_accel_sigma: 1.0,
+        })
+        .build()
+        .unwrap();
+    let n = TrackManagementConfig::default().confirm_n as usize;
+    let mut sim = sim_with(
+        cfg,
+        vec![target(Vector3::new(0.0, 1000.0, 0.0), Vector3::ZERO)],
+    );
+    // The beam starts on the target and slews away (18° per update) to a
+    // command it then holds: one detection, then the track is never covered.
+    sim.command_beam(RADAR, std::f64::consts::PI, 0.0).unwrap();
+    let first = run(&mut sim, 1, &OpenSky);
+    assert!(
+        first.iter().any(
+            |o| matches!(o, Observation::TrackUpdated(t) if t.status == TrackStatus::Tentative)
+        )
+    );
+    // Not deleted while (time − last hit) ≤ (N + 1) revisits (0.1 s each)…
+    let quiet = run(&mut sim, n + 1, &OpenSky);
+    assert!(quiet.is_empty(), "{quiet:?}");
+    assert_eq!(sim.tracks(RADAR).unwrap().len(), 1);
+    // …and deleted on the next update, with no miss recorded.
+    let gone = run(&mut sim, 1, &OpenSky);
+    assert_eq!(
+        gone,
+        vec![Observation::TrackDeleted {
+            sensor: RADAR,
+            id: TrackId(1),
+            time: sim.now(),
+        }]
+    );
+    assert!(sim.tracks(RADAR).unwrap().is_empty());
+}
