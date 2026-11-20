@@ -1,8 +1,8 @@
 [package]
 name = "radar"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.86"
 license = "AGPL-3.0-only"
 description = "Realistic radar and sensor simulation for games and simulations: scanning, probabilistic detection, measurement noise, tracking and electronic warfare."
 authors = ["CryptoPatrick <cryptopatrick@gmail.com>"]
@@ -11,7 +11,7 @@ documentation = "https://docs.rs/radar"
 readme = "README.md"
 keywords = ["radar", "sensor", "simulation", "gamedev", "tracking"]
 categories = ["simulation", "game-development", "science"]
-include = ["/src", "/examples", "/tests", "/README.md", "/LICENSE", "/COPYING"]
+include = ["/src", "/examples", "/tests", "/README.md", "/CHANGELOG.md", "/LICENSE", "/COPYING"]
 
 [dependencies]
 rand_core = "0.10"

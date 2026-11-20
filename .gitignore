@@ -2,3 +2,5 @@
 /.worktrees/
 /target
 Cargo.lock
+/_dev/
+/_wb/

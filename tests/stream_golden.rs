@@ -83,6 +83,10 @@ fn fnv1a(obs: &[Observation]) -> u64 {
 }
 
 #[test]
+#[cfg_attr(
+    not(all(target_os = "macos", target_arch = "aarch64")),
+    ignore = "hash recorded on aarch64-apple-darwin; libm results differ across platforms"
+)]
 fn observation_stream_is_pinned() {
     let obs = stream();
     assert!(obs.iter().any(|o| matches!(o, Observation::Measurement(_))));
