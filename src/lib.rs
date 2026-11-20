@@ -28,10 +28,10 @@ pub mod prelude {
     pub use crate::geometry::{Pose3, Rotation3, Vector2, Vector3};
     pub use crate::ids::{EmitterId, PlatformId, SensorId, TargetId, TrackId, TransponderCode};
     pub use crate::radar::{
-        BeamPattern, Calibration, DetectionConfig, DetectionContext, DetectionModel,
-        DetectionResult, Dimension, IdentificationConfig, Measurement, MeasurementConfig,
-        MeasurementSigma, RadarConfig, RangeEquationDetector, RangeLimits, ScanConfig, ScanFrame,
-        analytic_pd, resolution_cells,
+        AntennaConfig, BeamPattern, Calibration, DetectionConfig, DetectionContext, DetectionModel,
+        DetectionResult, Dimension, IdentificationConfig, JammingReference, Measurement,
+        MeasurementConfig, MeasurementSigma, RadarConfig, RangeEquationConfig,
+        RangeEquationDetector, RangeLimits, ScanConfig, ScanFrame, analytic_pd, resolution_cells,
     };
     pub use crate::random::{ChaChaStream, RandomSource, RandomSourceFactory, Seed, StreamId};
     pub use crate::sensor::{Observation, SensorContext, SensorModel};
@@ -43,5 +43,8 @@ pub mod prelude {
         Tracker, TrackerConfig,
     };
     pub use crate::units::WorldScale;
-    pub use crate::world::{PlatformState, RadarSignature, Swerling, TargetState, WorldSnapshot};
+    pub use crate::world::{
+        Band, EmitterKind, EmitterState, PlatformState, RadarSignature, Swerling, TargetState,
+        WorldSnapshot,
+    };
 }

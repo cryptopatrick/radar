@@ -2,9 +2,7 @@
 #![cfg(feature = "ew")]
 
 use radar::prelude::*;
-use radar::radar::{JammingReference, RangeEquationConfig};
 use radar::units::deg;
-use radar::world::{Band, EmitterKind, EmitterState};
 use std::f64::consts::{FRAC_PI_2, TAU};
 
 const RADAR: SensorId = SensorId(1);
