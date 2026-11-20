@@ -56,7 +56,7 @@ impl TrackerConfig {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TrackManagementConfig {
-    /// Hits needed to confirm (M of M-of-N).
+    /// Hits needed to confirm (M of M-of-N), `1 ..= confirm_n`.
     pub confirm_m: u32,
     /// Window of illuminated outcomes (N of M-of-N).
     pub confirm_n: u32,

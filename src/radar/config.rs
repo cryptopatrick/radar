@@ -475,9 +475,9 @@ impl RadarConfig {
         }
         let m = &self.track_management;
         check(
-            m.confirm_m <= m.confirm_n,
+            m.confirm_m >= 1 && m.confirm_m <= m.confirm_n,
             "track_management.confirm_m",
-            "must be <= confirm_n",
+            "must be >= 1 and <= confirm_n",
         )?;
         check(
             m.max_coast >= 1,
@@ -1008,6 +1008,11 @@ mod tests {
             m
         };
         let m = mgmt(|m| m.confirm_m = 6);
+        assert_eq!(
+            field_of(b().track_management(m).build()),
+            "track_management.confirm_m"
+        );
+        let m = mgmt(|m| m.confirm_m = 0);
         assert_eq!(
             field_of(b().track_management(m).build()),
             "track_management.confirm_m"
