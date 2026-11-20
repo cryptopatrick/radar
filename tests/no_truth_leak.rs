@@ -119,6 +119,8 @@ fn measurement_fields_are_reviewed() {
                 elevation: _,
                 j_over_n_db: _,
             } => assert_eq!(*sensor, RADAR),
+            // `Observation` is non-exhaustive: review any new variant here.
+            other => panic!("unreviewed observation variant: {other:?}"),
         }
     }
     assert!(measurements > 0);

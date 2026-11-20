@@ -15,6 +15,7 @@ use crate::time::SimTime;
 
 /// What happened to a target (or false alarm) during one sensor update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DiagnosticOutcome {
     /// The target was detected and measured.
     Detected,

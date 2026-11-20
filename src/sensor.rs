@@ -51,6 +51,7 @@ pub trait SensorModel: Send + std::fmt::Debug {
 // `TrackUpdated` carries the full 6×6 covariance by value, as specified;
 // observations are moved in bulk through reusable buffers.
 #[cfg_attr(feature = "tracking", allow(clippy::large_enum_variant))]
+#[non_exhaustive]
 pub enum Observation {
     /// A detection (real or false alarm).
     Measurement(Measurement),

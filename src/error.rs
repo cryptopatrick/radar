@@ -5,6 +5,7 @@ use crate::time::SimTime;
 
 /// Errors returned by validation and simulation operations.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum RadarError {
     /// A configuration field holds an invalid value.
     #[error("invalid configuration: {field}: {reason}")]
