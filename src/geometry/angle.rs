@@ -3,9 +3,10 @@
 use super::vector::Vector3;
 use std::f64::consts::{PI, TAU};
 
-/// Wraps an angle into `[0, 2π)`.
+/// Wraps an angle into `[0, 2π)`; `-0.0` maps to `+0.0`.
 pub fn wrap_two_pi(a: f64) -> f64 {
-    let r = a.rem_euclid(TAU);
+    // `+ 0.0` turns a `-0.0` remainder into `+0.0`.
+    let r = a.rem_euclid(TAU) + 0.0;
     if r >= TAU { 0.0 } else { r }
 }
 
@@ -56,6 +57,8 @@ mod tests {
         assert!((wrap_two_pi(-0.1) - (TAU - 0.1)).abs() < 1e-12);
         assert!((wrap_pi(3.0 * PI / 2.0) + PI / 2.0).abs() < 1e-12);
         assert_eq!(wrap_pi(PI), PI);
+        assert!(wrap_two_pi(-0.0).is_sign_positive());
+        assert!(azimuth_of(Vector3::new(-0.0, 1.0, 0.0)).is_sign_positive());
     }
 
     #[test]
