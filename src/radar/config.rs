@@ -6,6 +6,7 @@ use crate::radar::calibration::Calibration;
 #[cfg(feature = "ew")]
 use crate::radar::calibration::JammingReference;
 use crate::radar::detection::DetectionModel;
+use crate::radar::false_alarm::resolution_cells;
 use crate::radar::measurement::{MeasurementConfig, MeasurementSigma};
 use crate::radar::scan::{ScanConfig, max_sweep_per_update};
 use crate::time::SimDuration;
@@ -55,7 +56,9 @@ pub struct RangeLimits {
 pub struct RangeEquationConfig {
     /// How the range-equation constant is obtained.
     pub calibration: Calibration,
-    /// Probability of false alarm per resolution cell, in `(0, 0.1]`.
+    /// Probability of false alarm per resolution cell, in `(0, 0.1]`; the
+    /// expected false alarms per update are capped at
+    /// [`MAX_EXPECTED_FALSE_ALARMS_PER_UPDATE`].
     pub pfa: f64,
     /// Range resolution, m (> 0).
     pub range_resolution: f64,
@@ -71,7 +74,9 @@ pub enum DetectionConfig {
         range: f64,
         /// Probability of detection, in `[0, 1]`.
         pd: f64,
-        /// Mean number of false alarms per full 2π scan, `>= 0`.
+        /// Mean number of false alarms per full 2π scan, `>= 0`; the
+        /// expected false alarms per update are capped at
+        /// [`MAX_EXPECTED_FALSE_ALARMS_PER_UPDATE`].
         false_alarms_per_scan: f64,
     },
     /// Single-look square-law detection from the radar range equation.
@@ -152,6 +157,15 @@ pub struct RadarConfig {
     #[cfg(feature = "ew")]
     pub strobe_threshold_db: f64,
 }
+
+/// Largest expected number of false alarms per update that
+/// [`RadarConfig::validate`] accepts. The expectation is taken over the
+/// largest sweep one update can make
+/// ([`max_sweep_per_update`](crate::radar::scan::max_sweep_per_update)):
+/// `pfa · resolution_cells(..)` for range-equation detection and
+/// `false_alarms_per_scan · sweep / 2π` for radius detection. Configs above
+/// it would allocate unbounded numbers of spurious measurements.
+pub const MAX_EXPECTED_FALSE_ALARMS_PER_UPDATE: f64 = 1e4;
 
 fn invalid(field: &'static str, reason: &str) -> RadarError {
     RadarError::InvalidConfig {
@@ -341,6 +355,9 @@ impl RadarConfig {
             "limits",
             "need finite 0 <= min_range < instrumented_range",
         )?;
+        let max_sweep = max_sweep_per_update(&self.scan, self.update_period.as_secs_f64());
+        let fa_reason = "expected false alarms per update must be \
+                         <= MAX_EXPECTED_FALSE_ALARMS_PER_UPDATE (1e4)";
         match &self.detection {
             DetectionConfig::Radius {
                 range,
@@ -362,6 +379,11 @@ impl RadarConfig {
                     "detection.false_alarms_per_scan",
                     "must be finite and >= 0",
                 )?;
+                check(
+                    false_alarms_per_scan * max_sweep / TAU <= MAX_EXPECTED_FALSE_ALARMS_PER_UPDATE,
+                    "detection.false_alarms_per_scan",
+                    fa_reason,
+                )?;
             }
             DetectionConfig::RangeEquation(c) => {
                 check(
@@ -373,6 +395,17 @@ impl RadarConfig {
                     positive(c.range_resolution),
                     "detection.range_resolution",
                     "must be finite and > 0",
+                )?;
+                let cells = resolution_cells(
+                    &self.limits,
+                    c.range_resolution,
+                    max_sweep,
+                    self.antenna.beamwidth_az,
+                );
+                check(
+                    c.pfa * cells <= MAX_EXPECTED_FALSE_ALARMS_PER_UPDATE,
+                    "detection.pfa",
+                    fa_reason,
                 )?;
                 check_calibration(&c.calibration)?;
             }
@@ -927,6 +960,37 @@ mod tests {
             field_of(b().detection(det).build()),
             "detection.calibration.peak_power_w"
         );
+    }
+
+    #[test]
+    fn builder_rejects_false_alarm_flood() {
+        let b = RadarConfig::builder;
+        // 1e6 range cells (1 km at 1 mm) × 12 beamwidths swept per update
+        // (2π·0.1 / 3°) = 1.2e7 cells: pfa 0.1 ⇒ 1.2e6, pfa 1e-4 ⇒ 1.2e3.
+        let det = |pfa: f64| {
+            DetectionConfig::RangeEquation(RangeEquationConfig {
+                calibration: Calibration::Reference {
+                    rcs_m2: 1.0,
+                    range_m: 1000.0,
+                    snr_db: 13.0,
+                },
+                pfa,
+                range_resolution: 0.001,
+            })
+        };
+        assert_eq!(field_of(b().detection(det(0.1)).build()), "detection.pfa");
+        assert!(b().detection(det(1e-4)).build().is_ok());
+        // Default scan sweeps 2π·0.1 per update: 2e5 per scan ⇒ 2e4/update.
+        let radius = |fa: f64| DetectionConfig::Radius {
+            range: 1000.0,
+            pd: 1.0,
+            false_alarms_per_scan: fa,
+        };
+        assert_eq!(
+            field_of(b().detection(radius(2e5)).build()),
+            "detection.false_alarms_per_scan"
+        );
+        assert!(b().detection(radius(5e4)).build().is_ok());
     }
 
     #[cfg(feature = "tracking")]

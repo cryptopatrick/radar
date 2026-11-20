@@ -12,8 +12,8 @@ pub(crate) mod sensor;
 pub use antenna::{AntennaConfig, BeamPattern};
 pub use calibration::{Calibration, JammingReference, analytic_pd};
 pub use config::{
-    DetectionConfig, Dimension, IdentificationConfig, RadarConfig, RadarConfigBuilder,
-    RangeEquationConfig, RangeLimits, ScanFrame,
+    DetectionConfig, Dimension, IdentificationConfig, MAX_EXPECTED_FALSE_ALARMS_PER_UPDATE,
+    RadarConfig, RadarConfigBuilder, RangeEquationConfig, RangeLimits, ScanFrame,
 };
 pub use detection::{
     DetectionContext, DetectionModel, DetectionResult, RadiusDetector, RangeEquationDetector,
