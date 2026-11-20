@@ -73,6 +73,7 @@ fn jammer(platform: PlatformId, position: Vector3) -> EmitterState {
         id: EmitterId(1),
         platform: Some(platform),
         position,
+        velocity: Vector3::ZERO,
         band: band(),
         erp_w: 1.0,
         kind: EmitterKind::NoiseJammer,
@@ -303,4 +304,34 @@ fn blocked_jammer_no_effect() {
     );
     assert!(strobes(&jammed).is_empty());
     assert_eq!(clean, jammed);
+}
+
+#[test]
+fn moving_jammer_strobe_tracks_extrapolated_position() {
+    // A self-screening jammer flying north at 300 m/s; the world is given
+    // once, at t = 0, so every later update must extrapolate it.
+    let velocity = Vector3::new(0.0, 300.0, 0.0);
+    let mut target = target_east();
+    target.velocity = velocity;
+    let mut j = jammer(TARGET_PLATFORM, Vector3::new(R_TARGET, 0.0, 0.0));
+    j.velocity = velocity;
+    let obs = run(
+        config(Dimension::TwoD, Some(band())),
+        world(vec![target], vec![j]),
+        &OpenSky,
+        20,
+    );
+    let mut seen = 0;
+    for o in &obs {
+        if let Observation::JammingStrobe { time, azimuth, .. } = o {
+            let north = 300.0 * time.as_secs_f64();
+            let expected = R_TARGET.atan2(north);
+            assert!(
+                (azimuth - expected).abs() < deg(1.0),
+                "t {time:?}: azimuth {azimuth}, expected {expected}"
+            );
+            seen += 1;
+        }
+    }
+    assert_eq!(seen, 20, "one strobe per revolution");
 }

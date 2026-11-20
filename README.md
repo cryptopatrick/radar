@@ -128,8 +128,6 @@ The core (geometry, time, world, sensors, radar, simulation) is always on.
   track that is only grazed at a beam edge gets no outcome, so an uncertain
   track near an elevation-bar or sector edge is not driven into coasting,
   at the cost of detecting real fades there more slowly.
-- **Emitters are not extrapolated:** jammer positions are taken as given in
-  each snapshot, not moved between snapshots.
 
 ## Performance
 

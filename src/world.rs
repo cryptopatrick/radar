@@ -120,14 +120,24 @@ pub struct EmitterState {
     pub id: EmitterId,
     /// Platform carrying the emitter, if any.
     pub platform: Option<PlatformId>,
-    /// World position in metres.
+    /// World position in metres at the snapshot time.
     pub position: Vector3,
+    /// Velocity in metres per second; the position is extrapolated linearly
+    /// to each sensor update, like targets and platforms.
+    pub velocity: Vector3,
     /// Emitted band.
     pub band: Band,
     /// Effective radiated power in watts.
     pub erp_w: f64,
     /// Emitter kind.
     pub kind: EmitterKind,
+}
+
+impl EmitterState {
+    /// Position at time `t`, extrapolated linearly from `snapshot_time`.
+    pub fn position_at(&self, snapshot_time: SimTime, t: SimTime) -> Vector3 {
+        extrapolate(self.position, self.velocity, snapshot_time, t)
+    }
 }
 
 /// The state of the world at one instant.
@@ -180,6 +190,9 @@ impl WorldSnapshot {
             let who = format!("emitter {:?}", e.id);
             if !e.position.is_finite() {
                 return bad(&who, "position must be finite");
+            }
+            if !e.velocity.is_finite() {
+                return bad(&who, "velocity must be finite");
             }
             if !(e.erp_w.is_finite() && e.erp_w >= 0.0) {
                 return bad(&who, "erp_w must be finite and >= 0");
@@ -270,6 +283,24 @@ mod tests {
     }
 
     #[test]
+    fn emitter_extrapolation() {
+        let e = EmitterState {
+            id: EmitterId(1),
+            platform: None,
+            position: Vector3::new(1.0, 0.0, 0.0),
+            velocity: Vector3::new(0.0, 3.0, 0.0),
+            band: Band {
+                centre_hz: 10e9,
+                bandwidth_hz: 1e6,
+            },
+            erp_w: 1.0,
+            kind: EmitterKind::NoiseJammer,
+        };
+        let p = e.position_at(SimTime::ZERO, SimTime::from_nanos(2_000_000_000));
+        assert_eq!(p, Vector3::new(1.0, 6.0, 0.0));
+    }
+
+    #[test]
     fn platform_pose_extrapolates_position_only() {
         let p = PlatformState {
             id: PlatformId(1),
@@ -350,6 +381,7 @@ mod tests {
             id: EmitterId(1),
             platform: None,
             position: Vector3::ZERO,
+            velocity: Vector3::ZERO,
             band: Band {
                 centre_hz: 10e9,
                 bandwidth_hz: 100e6,
@@ -364,6 +396,9 @@ mod tests {
         assert!(w.validate().is_err());
         w.emitters[0] = e.clone();
         w.emitters[0].band.bandwidth_hz = 0.0;
+        assert!(w.validate().is_err());
+        w.emitters[0] = e.clone();
+        w.emitters[0].velocity = Vector3::new(0.0, f64::NAN, 0.0);
         assert!(w.validate().is_err());
         w.emitters[0] = e.clone();
         w.emitters.push(e);

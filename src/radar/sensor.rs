@@ -238,29 +238,34 @@ impl RadarSensor {
     }
 
     /// Every emitter in line of sight, in `EmitterId` order, with its
-    /// scan-frame geometry. Empty without a receiver band (immune radar).
-    /// Emitters on the radar's own platform are ignored.
+    /// scan-frame geometry at its position extrapolated to the update time.
+    /// Empty without a receiver band (immune radar). Emitters on the radar's
+    /// own platform are ignored.
     #[cfg(feature = "ew")]
     fn visible_jammers(&self, ctx: &SensorContext<'_>, frame: Frame) -> Vec<Jammer> {
         if self.cfg.receiver_band.is_none() {
             return Vec::new();
         }
-        ctx.world
+        let world = ctx.world;
+        world
             .emitters
             .iter()
             .filter(|e| e.platform != Some(ctx.platform.id))
-            .filter(|e| {
-                !ctx.environment
-                    .line_of_sight_blocked(frame.position, e.position)
-            })
-            .map(|e| {
-                let (range, azimuth, elevation) = frame.look_at(e.position);
-                Jammer {
+            .filter_map(|e| {
+                let position = e.position_at(world.time, ctx.time);
+                if ctx
+                    .environment
+                    .line_of_sight_blocked(frame.position, position)
+                {
+                    return None;
+                }
+                let (range, azimuth, elevation) = frame.look_at(position);
+                Some(Jammer {
                     emitter: e.clone(),
                     range,
                     azimuth,
                     elevation,
-                }
+                })
             })
             .collect()
     }

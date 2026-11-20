@@ -78,6 +78,7 @@ mod tests {
             id: EmitterId(1),
             platform: None,
             position: Vector3::ZERO,
+            velocity: Vector3::ZERO,
             band,
             erp_w,
             kind: EmitterKind::NoiseJammer,
