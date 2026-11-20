@@ -471,12 +471,14 @@ impl RadarSensor {
                 true
             }
             DetectionConfig::Radius {
+                range,
                 false_alarms_per_scan,
                 ..
             } => {
                 generate_radius_false_alarms(
                     sweep,
                     &cfg.limits,
+                    *range,
                     *false_alarms_per_scan,
                     &cfg.antenna,
                     cfg.dimension,

@@ -33,15 +33,16 @@ pub(crate) struct FalseAlarm {
     pub measured_snr: f64,
 }
 
-/// Draws range, two azimuth uniforms and (3D only) elevation for one alarm.
+/// Draws range (uniform in `[min_range, max_range]`), two azimuth uniforms
+/// and (3D only) elevation for one alarm.
 fn draw_position(
     sweep: &Sweep,
-    limits: &RangeLimits,
+    (min_range, max_range): (f64, f64),
     antenna: &AntennaConfig,
     dim: Dimension,
     rng: &mut dyn RandomSource,
 ) -> (f64, f64, f64) {
-    let range = limits.min_range + uniform01(rng) * (limits.instrumented_range - limits.min_range);
+    let range = min_range + uniform01(rng) * (max_range - min_range);
     let u1 = uniform01(rng);
     let u2 = uniform01(rng);
     let az = wrap_two_pi(
@@ -76,7 +77,8 @@ pub(crate) fn generate_false_alarms(
     );
     let count = poisson(rng, pfa * cells);
     for _ in 0..count {
-        let (range, azimuth_scan, elevation_scan) = draw_position(sweep, limits, antenna, dim, rng);
+        let span = (limits.min_range, limits.instrumented_range);
+        let (range, azimuth_scan, elevation_scan) = draw_position(sweep, span, antenna, dim, rng);
         let power = -pfa.ln() + exponential(rng, 1.0);
         out.push(FalseAlarm {
             range,
@@ -89,19 +91,28 @@ pub(crate) fn generate_false_alarms(
 
 /// Generates radius-mode false alarms:
 /// `count = poisson(false_alarms_per_scan × |delta| / 2π)`, same position
-/// draws, `measured_snr = 0.0`, no power draw.
+/// draws with range over `[min_range, min(radius, instrumented_range)]`
+/// (no draw at all if that interval is empty), `measured_snr = 0.0`, no
+/// power draw.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn generate_radius_false_alarms(
     sweep: &Sweep,
     limits: &RangeLimits,
+    radius: f64,
     false_alarms_per_scan: f64,
     antenna: &AntennaConfig,
     dim: Dimension,
     rng: &mut dyn RandomSource,
     out: &mut Vec<FalseAlarm>,
 ) {
+    let max_range = radius.min(limits.instrumented_range);
+    if max_range <= limits.min_range {
+        return;
+    }
     let count = poisson(rng, false_alarms_per_scan * sweep.delta_azimuth.abs() / TAU);
     for _ in 0..count {
-        let (range, azimuth_scan, elevation_scan) = draw_position(sweep, limits, antenna, dim, rng);
+        let span = (limits.min_range, max_range);
+        let (range, azimuth_scan, elevation_scan) = draw_position(sweep, span, antenna, dim, rng);
         out.push(FalseAlarm {
             range,
             azimuth_scan,
@@ -239,6 +250,7 @@ mod tests {
             generate_radius_false_alarms(
                 &sweep(0.0, TAU / 4.0),
                 &LIMITS,
+                f64::INFINITY,
                 8.0,
                 &antenna,
                 Dimension::TwoD,
@@ -249,5 +261,45 @@ mod tests {
         let mean = out.len() as f64 / n as f64;
         assert!((mean - 2.0).abs() < 0.15, "mean {mean}");
         assert!(out.iter().all(|fa| fa.measured_snr == 0.0));
+    }
+
+    #[test]
+    fn radius_mode_range_within_radius() {
+        let antenna = AntennaConfig::default();
+        let limits = RangeLimits {
+            min_range: 100.0,
+            instrumented_range: 10_000.0,
+        };
+        let mut r = rng();
+        let mut out = Vec::new();
+        for _ in 0..200 {
+            generate_radius_false_alarms(
+                &sweep(0.0, TAU / 4.0),
+                &limits,
+                500.0,
+                8.0,
+                &antenna,
+                Dimension::TwoD,
+                &mut r,
+                &mut out,
+            );
+        }
+        assert!(!out.is_empty());
+        assert!(out.iter().all(|fa| (100.0..=500.0).contains(&fa.range)));
+        // A radius inside the minimum range admits no alarm at all.
+        let mut none = Vec::new();
+        for _ in 0..200 {
+            generate_radius_false_alarms(
+                &sweep(0.0, TAU / 4.0),
+                &limits,
+                50.0,
+                8.0,
+                &antenna,
+                Dimension::TwoD,
+                &mut r,
+                &mut none,
+            );
+        }
+        assert!(none.is_empty());
     }
 }
