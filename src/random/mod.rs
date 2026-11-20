@@ -18,6 +18,7 @@ pub trait RandomSource {
 
 /// The master seed of a simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Seed(pub u64);
 
 impl Seed {
@@ -46,6 +47,7 @@ pub type RandomSourceFactory = Box<dyn Fn(StreamId) -> Box<dyn RandomSource + Se
 /// with other streams, so sensor ids must stay below `2^62`; `Simulation`
 /// rejects larger ids with `InvalidConfig`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum StreamId {
     /// The stream owned by one sensor.
     Sensor(SensorId),
@@ -90,6 +92,19 @@ impl RandomSource for ChaChaStream {
 mod tests {
     use super::sample::*;
     use super::*;
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn replay_types_are_serde() {
+        fn serde<T: serde::Serialize + serde::de::DeserializeOwned>() {}
+        serde::<Seed>();
+        serde::<StreamId>();
+        #[cfg(feature = "diagnostics")]
+        {
+            serde::<crate::diagnostics::DiagnosticRecord>();
+            serde::<crate::diagnostics::DiagnosticOutcome>();
+        }
+    }
 
     fn stream(seed: u64, id: u64) -> ChaChaStream {
         ChaChaStream::new(Seed(seed), StreamId::Sensor(SensorId(id)))

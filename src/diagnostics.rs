@@ -15,6 +15,7 @@ use crate::time::SimTime;
 
 /// What happened to a target (or false alarm) during one sensor update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum DiagnosticOutcome {
     /// The target was detected and measured.
@@ -33,6 +34,7 @@ pub enum DiagnosticOutcome {
 
 /// Ground truth for one target in one sensor update, or one false alarm.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DiagnosticRecord {
     /// The reporting sensor.
     pub sensor: SensorId,
