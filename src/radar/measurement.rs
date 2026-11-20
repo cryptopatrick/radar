@@ -51,7 +51,10 @@ pub struct Measurement {
     pub sensor: SensorId,
     /// Simulation time of the measurement.
     pub time: SimTime,
-    /// Measured slant range, m.
+    /// Measured slant range, m. A [`Dimension::TwoD`](crate::radar::Dimension::TwoD)
+    /// radar reports the full 3D slant range but no elevation, so placing
+    /// it in the horizontal plane biases the ground range outward for
+    /// targets at altitude.
     pub range: f64,
     /// Measured world-frame compass bearing, rad in `[0, 2π)`.
     pub azimuth: f64,

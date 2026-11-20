@@ -22,7 +22,9 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Dimension {
-    /// Range and azimuth only; elevation is ignored.
+    /// Range and azimuth only; elevation is ignored. The reported range is
+    /// the slant range, so a target at altitude appears farther out than
+    /// its ground range when placed in the horizontal plane.
     TwoD,
     /// Range, azimuth and elevation.
     ThreeD,
@@ -117,6 +119,13 @@ pub struct IdentificationConfig {
 
 /// Full configuration of one radar. Build it with [`RadarConfig::builder`]
 /// or a preset; [`RadarConfig::validate`] checks a hand-assembled value.
+///
+/// The builder (and the presets) are the stable way to construct a
+/// `RadarConfig`: the `tracker`, `track_management`, `receiver_band`,
+/// `jamming_reference` and `strobe_threshold_db` fields exist only with
+/// their features (`tracking`, `ew`), so a struct literal that compiles
+/// under one feature set fails under another, while builder calls for
+/// absent features are simply not written.
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RadarConfig {

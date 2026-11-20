@@ -107,6 +107,9 @@ The core (geometry, time, world, sensors, radar, simulation) is always on.
 
 ## Model limitations
 
+- **2D radars report slant range:** a `Dimension::TwoD` radar measures the
+  full 3D slant range but no elevation, so placing its plots in the
+  horizontal plane biases the ground range outward for targets at altitude.
 - **Single-look detection:** each look is an independent square-law decision
   on one pulse; there is no pulse integration (coherent or non-coherent).
 - **No clutter, multipath, atmosphere or refraction:** the only propagation

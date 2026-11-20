@@ -112,6 +112,13 @@ impl WorldScale {
     }
 
     /// A tick count as a simulation duration, rounded to the nearest nanosecond.
+    ///
+    /// The result is only meaningful for a scale whose `seconds_per_tick` is
+    /// finite and positive, as [`WorldScale::new`] guarantees. The fields are
+    /// public, so a scale assembled by hand is not checked: a NaN or negative
+    /// `seconds_per_tick` yields a zero duration and `+∞` saturates at the
+    /// largest representable duration. Build scales with
+    /// [`WorldScale::new`] to rule this out.
     pub fn duration(&self, ticks: u64) -> SimDuration {
         // Float-to-int `as` saturates for out-of-range values.
         SimDuration::from_nanos((ticks as f64 * self.seconds_per_tick * 1e9).round() as u64)

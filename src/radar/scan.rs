@@ -200,7 +200,8 @@ pub struct Sweep {
     pub start_azimuth: f64,
     /// Signed azimuth change over the interval, `|·| ≤ 2π`.
     pub delta_azimuth: f64,
-    /// Beam elevation during the interval.
+    /// Beam elevation at the start of the interval (a Raster or Volume scan
+    /// may change row or bar during it).
     pub elevation: f64,
     /// Whether a full scan completed during the interval.
     pub completed: bool,
