@@ -82,8 +82,8 @@ The core (geometry, time, world, sensors, radar, simulation) is always on.
 - **`WorldScale`** converts host units and ticks (positions, speeds,
   durations, angles per tick) to SI at the boundary; the core never sees host
   units.
-- Between world snapshots, platform and target positions are extrapolated
-  linearly from their velocities.
+- Between world snapshots, platform, target and emitter positions are
+  extrapolated linearly from their velocities.
 
 ## Determinism
 

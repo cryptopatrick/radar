@@ -170,7 +170,7 @@ pub struct RadarConfig {
 /// Largest expected number of false alarms per update that
 /// [`RadarConfig::validate`] accepts. The expectation is taken over the
 /// largest sweep one update can make
-/// ([`max_sweep_per_update`](crate::radar::scan::max_sweep_per_update)):
+/// ([`max_sweep_per_update`]):
 /// `pfa · resolution_cells(..)` for range-equation detection and
 /// `false_alarms_per_scan · sweep / 2π` for radius detection. Configs above
 /// it would allocate unbounded numbers of spurious measurements.
