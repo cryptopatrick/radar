@@ -212,6 +212,19 @@ fn duplicate_sensor_rejected() {
 }
 
 #[test]
+fn sensor_id_beyond_stream_space_rejected() {
+    let mut sim = Simulation::new(SimulationConfig::default());
+    let cfg = || RadarConfig::simple_2d(1200.0).unwrap();
+    let r = sim.add_radar(SensorId(1 << 62), OWN, Pose3::IDENTITY, cfg());
+    assert!(
+        matches!(r, Err(RadarError::InvalidConfig { field: "id", .. })),
+        "{r:?}"
+    );
+    let largest = SensorId((1 << 62) - 1);
+    sim.add_radar(largest, OWN, Pose3::IDENTITY, cfg()).unwrap();
+}
+
+#[test]
 fn unknown_sensor_errors() {
     let mut sim = Simulation::new(SimulationConfig::default());
     let unknown = Err(RadarError::UnknownSensor(SensorId(9)));

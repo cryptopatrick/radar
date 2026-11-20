@@ -43,7 +43,8 @@ pub type RandomSourceFactory = Box<dyn Fn(StreamId) -> Box<dyn RandomSource + Se
 /// Identifies an independent random stream derived from a [`Seed`].
 ///
 /// Sensor ids of `2^62` or more would overflow the stream index and collide
-/// with other streams, so sensor ids must stay below `2^62`.
+/// with other streams, so sensor ids must stay below `2^62`; `Simulation`
+/// rejects larger ids with `InvalidConfig`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StreamId {
     /// The stream owned by one sensor.

@@ -191,7 +191,7 @@ impl Simulation {
     ///
     /// # Errors
     /// `DuplicateSensor` if `id` exists; `InvalidConfig` if the config or
-    /// mount is invalid.
+    /// mount is invalid or `id` is `2^62` or more (field `"id"`).
     pub fn add_radar(
         &mut self,
         id: SensorId,
@@ -210,7 +210,7 @@ impl Simulation {
     ///
     /// # Errors
     /// `DuplicateSensor` if `id` exists; `InvalidConfig` if the period is
-    /// zero or the mount is invalid.
+    /// zero, the mount is invalid or `id` is `2^62` or more (field `"id"`).
     pub fn add_sensor(
         &mut self,
         id: SensorId,
@@ -239,6 +239,11 @@ impl Simulation {
         period: SimDuration,
         kind: SensorKind,
     ) -> Result<(), RadarError> {
+        if id.0 >= 1 << 62 {
+            // Sensor stream numbers are `id << 2`; larger ids would wrap
+            // onto other sensors' (or the shared) random streams.
+            return Err(invalid("id", "sensor ids must be < 2^62"));
+        }
         if !(mount.position.is_finite() && mount.rotation.is_valid()) {
             return Err(invalid(
                 "mount",
