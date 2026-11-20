@@ -174,6 +174,10 @@ pub struct RadarConfig {
 /// `pfa · resolution_cells(..)` for range-equation detection and
 /// `false_alarms_per_scan · sweep / 2π` for radius detection. Configs above
 /// it would allocate unbounded numbers of spurious measurements.
+///
+/// Validation cannot know how far a [`ScanConfig::Custom`] pattern sweeps, so
+/// it assumes zero sweep for it (as for a fixed beam); a custom pattern is
+/// bounded only by the sampler's clamp of the Poisson mean to this value.
 pub const MAX_EXPECTED_FALSE_ALARMS_PER_UPDATE: f64 = 1e4;
 
 fn invalid(field: &'static str, reason: &str) -> RadarError {

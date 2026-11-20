@@ -78,8 +78,8 @@
 //! | `diagnostics` | no      | A ground-truth debug channel (`Simulation::drain_diagnostics`) |
 //!
 //! Features add fields and enum variants: [`sensor::Observation`],
-//! [`error::RadarError`] and the other public enums are `#[non_exhaustive]`,
-//! and `RadarConfig` should be built through its builder rather than a
+//! [`error::RadarError`], [`world::EmitterKind`] and (with `diagnostics`)
+//! `DiagnosticOutcome` are `#[non_exhaustive]`, and `RadarConfig` should be built through its builder rather than a
 //! struct literal.
 //!
 //! # Ground truth
