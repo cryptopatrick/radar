@@ -28,6 +28,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with the paper's parabolic, horn and five-horn array presets;
   `CoverageMap`, which maps mean SNR and range resolution over a
   `CoverageGrid` for a `CoverageScenario`. New example: `passive_starlink`.
+- **Passive noise and interference:** `Interference` with `DirectSignal`
+  leakage (after cancellation) and other in-band power;
+  `PassiveReceiver::sinr_at`, `interference_to_noise`,
+  `direct_signal_power_w`, `required_cancellation_db` and `noise_power_dbw`.
+- **Passive false alarms:** `RangeDopplerMap` (cells per CPI, false alarms per
+  CPI and per second, Pfa for a target rate) and cell-averaging CFAR
+  (`ca_cfar_multiplier`, `ca_cfar_pd`, `ca_cfar_loss_db`).
 
 ## [0.2.0] - 2026-11-20
 
