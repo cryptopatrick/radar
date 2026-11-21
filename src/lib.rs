@@ -46,6 +46,9 @@
 //! # }
 //! ```
 //!
+//! [`bistatic`] computes link budgets for passive radars that listen to
+//! illuminators of opportunity such as Starlink, GPS or Galileo satellites.
+//!
 //! `examples/` holds fuller programs (`basic_2d`, `basic_3d`,
 //! `multi_sensor`).
 //!
@@ -107,6 +110,7 @@
 //!   `Simulation::reset`.
 #![warn(missing_docs)]
 
+pub mod bistatic;
 #[cfg(feature = "diagnostics")]
 pub mod diagnostics;
 pub mod environment;
