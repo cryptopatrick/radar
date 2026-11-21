@@ -196,8 +196,8 @@ impl Tracker for KalmanCv {
             return s.clone();
         }
         let mut h = Matrix::<3, 6>::zeros();
-        for i in 0..3 {
-            h.0[i][i] = 1.0;
+        for (i, row) in h.0.iter_mut().enumerate() {
+            row[i] = 1.0;
         }
         let r = Matrix(r);
         let Some(s_inv) = inverse3(&(h * s.p.matrix() * h.transpose() + r)) else {
