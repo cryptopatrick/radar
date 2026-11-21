@@ -24,6 +24,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for Swerling 0, 1 and 3 targets) and `PassiveReceiver::detect`.
 - `required_snr_db`: the mean SNR that reaches a given Pd at a given Pfa.
   `Calibration::reference_for_pd` now uses it, with unchanged results.
+- **Passive coverage:** `PassiveReceiver::max_rx_range`; `SurveillanceAntenna`
+  with the paper's parabolic, horn and five-horn array presets;
+  `CoverageMap`, which maps mean SNR and range resolution over a
+  `CoverageGrid` for a `CoverageScenario`. New example: `passive_starlink`.
 
 ## [0.2.0] - 2026-11-20
 
