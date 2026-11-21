@@ -15,6 +15,10 @@
 //! illuminator signal measurements", *IRS 2022*, which compares Starlink,
 //! GPS, Galileo and DVB-S2 satellites as illuminators.
 //!
+//! [`BistaticGeometry`] also gives the bistatic range and velocity
+//! resolution and the Doppler shift of the echo, including the shift a
+//! moving satellite puts on a stationary target.
+//!
 //! ```
 //! use radar::bistatic::{BistaticGeometry, Illuminator, PassiveReceiver};
 //! use radar::geometry::Vector3;
@@ -33,7 +37,9 @@
 mod budget;
 mod geometry;
 mod illuminator;
+mod resolution;
 
 pub use budget::PassiveReceiver;
 pub use geometry::BistaticGeometry;
 pub use illuminator::Illuminator;
+pub use resolution::{range_resolution, velocity_resolution};
