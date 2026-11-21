@@ -19,6 +19,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   paper, with bistatic and aspect angles), `velocity_resolution`, and
   `BistaticGeometry` methods for both, plus the echo and direct-signal
   Doppler shifts with a moving transmitter.
+- **Passive detection:** `DetectionThreshold` (the paper's fixed 16.5 dB
+  mean-SNR threshold, or a false-alarm-probability detector with `analytic_pd`
+  for Swerling 0, 1 and 3 targets) and `PassiveReceiver::detect`.
+- `required_snr_db`: the mean SNR that reaches a given Pd at a given Pfa.
+  `Calibration::reference_for_pd` now uses it, with unchanged results.
 
 ## [0.2.0] - 2026-11-20
 
