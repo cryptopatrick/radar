@@ -9,18 +9,30 @@ macro_rules! id_type {
     };
 }
 
-id_type!(/// Identifies a platform that carries sensors.
-    PlatformId(u64));
-id_type!(/// Identifies a target in the world.
-    TargetId(u64));
-id_type!(/// Identifies a sensor.
-    SensorId(u64));
-id_type!(/// Identifies a track maintained by a tracker.
-    TrackId(u64));
-id_type!(/// Identifies an emitter (for example a jammer).
-    EmitterId(u64));
-id_type!(/// A transponder identification code.
-    TransponderCode(u32));
+id_type!(
+    /// Identifies a platform that carries sensors.
+    PlatformId(u64)
+);
+id_type!(
+    /// Identifies a target in the world.
+    TargetId(u64)
+);
+id_type!(
+    /// Identifies a sensor.
+    SensorId(u64)
+);
+id_type!(
+    /// Identifies a track maintained by a tracker.
+    TrackId(u64)
+);
+id_type!(
+    /// Identifies an emitter (for example a jammer).
+    EmitterId(u64)
+);
+id_type!(
+    /// A transponder identification code.
+    TransponderCode(u32)
+);
 
 #[cfg(test)]
 mod tests {
