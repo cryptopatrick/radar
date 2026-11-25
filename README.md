@@ -133,7 +133,9 @@ preliminary study and first illuminator signal measurements", IRS 2022.
 
 - **Bistatic is analytic only:** the `bistatic` module evaluates link
   budgets for a given geometry. `Simulation` radars stay monostatic, so a
-  passive radar cannot yet be stepped, tracked or jammed there.
+  passive radar cannot yet be stepped, tracked or jammed there. It has
+  no tracking of its own, no multipath or clutter, and treats residual
+  direct-signal interference as noise.
 
 - **2D radars report slant range:** a `Dimension::TwoD` radar measures the
   full 3D slant range but no elevation, so placing its plots in the
