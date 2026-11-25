@@ -42,5 +42,8 @@ name = "basic_2d"
 required-features = ["tracking"]
 
 [[example]]
+name = "passive_starlink"
+
+[[example]]
 name = "multi_sensor"
 required-features = ["tracking"]

@@ -19,7 +19,9 @@
 //! resolution and the Doppler shift of the echo, including the shift a
 //! moving satellite puts on a stationary target. [`DetectionThreshold`]
 //! turns an SNR into a detection, with the paper's fixed 16.5 dB threshold
-//! or a false-alarm-rate detector for fluctuating targets.
+//! or a false-alarm-rate detector for fluctuating targets. [`CoverageMap`]
+//! maps SNR and range resolution over a grid, for the paper's parabolic,
+//! horn and horn-array surveillance antennas or your own.
 //!
 //! ```
 //! use radar::bistatic::{BistaticGeometry, Illuminator, PassiveReceiver};
@@ -37,12 +39,16 @@
 //! ```
 
 mod budget;
+mod coverage;
 mod detection;
 mod geometry;
 mod illuminator;
 mod resolution;
 
 pub use budget::PassiveReceiver;
+pub use coverage::{
+    CoverageGrid, CoverageMap, CoverageScenario, SteeredAntenna, SurveillanceAntenna,
+};
 pub use detection::{DetectionThreshold, PassiveDetection};
 pub use geometry::BistaticGeometry;
 pub use illuminator::Illuminator;
