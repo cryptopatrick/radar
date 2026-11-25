@@ -141,7 +141,8 @@ pub mod prelude {
         AntennaConfig, BeamPattern, Calibration, DetectionConfig, DetectionContext, DetectionModel,
         DetectionResult, Dimension, IdentificationConfig, JammingReference, Measurement,
         MeasurementConfig, MeasurementSigma, RadarConfig, RangeEquationConfig,
-        RangeEquationDetector, RangeLimits, ScanConfig, ScanFrame, analytic_pd, resolution_cells,
+        RangeEquationDetector, RangeLimits, ScanConfig, ScanFrame, analytic_pd, required_snr_db,
+        resolution_cells,
     };
     pub use crate::random::{ChaChaStream, RandomSource, RandomSourceFactory, Seed, StreamId};
     pub use crate::sensor::{Observation, SensorContext, SensorModel};

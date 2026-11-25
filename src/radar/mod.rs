@@ -10,7 +10,7 @@ pub mod scan;
 pub(crate) mod sensor;
 
 pub use antenna::{AntennaConfig, BeamPattern};
-pub use calibration::{Calibration, JammingReference, analytic_pd};
+pub use calibration::{Calibration, JammingReference, analytic_pd, required_snr_db};
 pub use config::{
     DetectionConfig, Dimension, IdentificationConfig, MAX_EXPECTED_FALSE_ALARMS_PER_UPDATE,
     RadarConfig, RadarConfigBuilder, RangeEquationConfig, RangeLimits, ScanFrame,

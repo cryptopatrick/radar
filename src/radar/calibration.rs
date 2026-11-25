@@ -121,31 +121,46 @@ impl Calibration {
         if !(range_m.is_finite() && range_m > 0.0) {
             return Err(invalid("range_m", "must be finite and > 0"));
         }
-        if !(pd > 0.0 && pd < 1.0) {
-            return Err(invalid("pd", "must be in (0, 1)"));
-        }
-        if !(pfa > 0.0 && pfa < 1.0) {
-            return Err(invalid("pfa", "must be in (0, 1)"));
-        }
-        let f = |db: f64| analytic_pd(db_to_linear(db), pfa, swerling) - pd;
-        let (mut lo, mut hi) = (-20.0_f64, 60.0_f64);
-        if f(lo) > 0.0 || f(hi) < 0.0 {
-            return Err(invalid("pd", "not reachable for SNR in [-20, 60] dB"));
-        }
-        while hi - lo > 1e-6 {
-            let mid = 0.5 * (lo + hi);
-            if f(mid) < 0.0 {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
+        let snr_db = required_snr_db(pd, pfa, swerling)?;
         Ok(Calibration::Reference {
             rcs_m2,
             range_m,
-            snr_db: 0.5 * (lo + hi),
+            snr_db,
         })
     }
+}
+
+/// Mean single-look SNR, dB, at which [`analytic_pd`] reaches `pd` for
+/// false-alarm probability `pfa` and fluctuation model `swerling`. Found by
+/// bisection over `[-20, 60]` dB to 1e-6 dB.
+///
+/// Returns [`RadarError::InvalidConfig`] for `pd` or `pfa` outside `(0, 1)`,
+/// or a `pd` not reachable within the search interval.
+pub fn required_snr_db(pd: f64, pfa: f64, swerling: Swerling) -> Result<f64, RadarError> {
+    let invalid = |field: &'static str, reason: &str| RadarError::InvalidConfig {
+        field,
+        reason: reason.into(),
+    };
+    if !(pd > 0.0 && pd < 1.0) {
+        return Err(invalid("pd", "must be in (0, 1)"));
+    }
+    if !(pfa > 0.0 && pfa < 1.0) {
+        return Err(invalid("pfa", "must be in (0, 1)"));
+    }
+    let f = |db: f64| analytic_pd(db_to_linear(db), pfa, swerling) - pd;
+    let (mut lo, mut hi) = (-20.0_f64, 60.0_f64);
+    if f(lo) > 0.0 || f(hi) < 0.0 {
+        return Err(invalid("pd", "not reachable for SNR in [-20, 60] dB"));
+    }
+    while hi - lo > 1e-6 {
+        let mid = 0.5 * (lo + hi);
+        if f(mid) < 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Ok(0.5 * (lo + hi))
 }
 
 /// Reference point for noise jamming when the calibration is
@@ -256,6 +271,20 @@ mod tests {
             let pd = analytic_pd(db_to_linear(snr_db), 1e-6, case);
             assert!((pd - 0.9).abs() < 1e-4, "{case:?}: pd {pd} at {snr_db} dB");
         }
+    }
+
+    #[test]
+    fn required_snr_db_inverts_analytic_pd() {
+        for case in CASES {
+            let db = required_snr_db(0.5, 1e-4, case).unwrap();
+            assert!((analytic_pd(db_to_linear(db), 1e-4, case) - 0.5).abs() < 1e-5);
+        }
+        // Swerling 1 has a closed form: snr = ln(pfa)/ln(pd) − 1.
+        let exact = 1e-6_f64.ln() / 0.9_f64.ln() - 1.0;
+        let db = required_snr_db(0.9, 1e-6, Swerling::One).unwrap();
+        assert!((db_to_linear(db) - exact).abs() / exact < 1e-5);
+        assert!(required_snr_db(0.0, 1e-6, Swerling::One).is_err());
+        assert!(required_snr_db(0.9, 1.0, Swerling::One).is_err());
     }
 
     #[test]

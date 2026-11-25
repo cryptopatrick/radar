@@ -15,6 +15,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   baseline, bistatic range, bistatic angle and bisector); and
   `PassiveReceiver`, which evaluates the bistatic radar range equation with
   coherent processing gain.
+- **Bistatic resolution and Doppler:** `range_resolution` (eq. (2) of the
+  paper, with bistatic and aspect angles), `velocity_resolution`, and
+  `BistaticGeometry` methods for both, plus the echo and direct-signal
+  Doppler shifts with a moving transmitter.
+- **Passive detection:** `DetectionThreshold` (the paper's fixed 16.5 dB
+  mean-SNR threshold, or a false-alarm-probability detector with `analytic_pd`
+  for Swerling 0, 1 and 3 targets) and `PassiveReceiver::detect`.
+- `required_snr_db`: the mean SNR that reaches a given Pd at a given Pfa.
+  `Calibration::reference_for_pd` now uses it, with unchanged results.
+- **Passive coverage:** `PassiveReceiver::max_rx_range`; `SurveillanceAntenna`
+  with the paper's parabolic, horn and five-horn array presets;
+  `CoverageMap`, which maps mean SNR and range resolution over a
+  `CoverageGrid` for a `CoverageScenario`. New example: `passive_starlink`.
+- **Passive noise and interference:** `Interference` with `DirectSignal`
+  leakage (after cancellation) and other in-band power;
+  `PassiveReceiver::sinr_at`, `interference_to_noise`,
+  `direct_signal_power_w`, `required_cancellation_db` and `noise_power_dbw`.
+- **Passive false alarms:** `RangeDopplerMap` (cells per CPI, false alarms per
+  CPI and per second, Pfa for a target rate) and cell-averaging CFAR
+  (`ca_cfar_multiplier`, `ca_cfar_pd`, `ca_cfar_loss_db`).
 
 ## [0.2.0] - 2026-11-20
 
