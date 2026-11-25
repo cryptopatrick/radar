@@ -4,6 +4,18 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the crate
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`bistatic` module:** link budgets for passive radars that listen to an
+  illuminator of opportunity. `Illuminator` with presets for Starlink, GPS
+  L1 C/A and L5, Galileo E1 and E5, and DVB-S2 (from Gomez-del-Hoyo et al.,
+  IRS 2022); `BistaticGeometry` (transmitter, receiver and target ranges,
+  baseline, bistatic range, bistatic angle and bisector); and
+  `PassiveReceiver`, which evaluates the bistatic radar range equation with
+  coherent processing gain.
+
 ## [0.2.0] - 2026-11-20
 
 A complete rewrite. `radar` is now a realistic radar and sensor simulation

@@ -105,7 +105,35 @@ The core (geometry, time, world, sensors, radar, simulation) is always on.
   noise) makes runs non-deterministic, and custom sensor models or scan
   patterns keep their own state across `reset()`.
 
+## Passive (bistatic) radar
+
+The `bistatic` module computes link budgets for a passive radar: a receiver
+with no transmitter of its own that detects echoes of someone else's signal,
+such as a Starlink, GPS, Galileo or DVB-S2 satellite.
+
+```rust
+use radar::bistatic::{BistaticGeometry, Illuminator, PassiveReceiver};
+use radar::geometry::Vector3;
+
+let starlink = Illuminator::starlink();
+let receiver = PassiveReceiver::default(); // 40 dBi, 0.5 s integration
+let geometry = BistaticGeometry {
+    transmitter: Vector3::new(0.0, 0.0, starlink.altitude_m),
+    receiver: Vector3::ZERO,
+    target: Vector3::new(0.0, 10_000.0, 0.0),
+};
+let snr_db = receiver.snr_db_at(&starlink, 40.0, &geometry);
+```
+
+The illuminator presets and the receiver defaults follow P. Gomez-del-Hoyo,
+K. Gronowski and P. Samczynski, "The STARLINK-based passive radar:
+preliminary study and first illuminator signal measurements", IRS 2022.
+
 ## Model limitations
+
+- **Bistatic is analytic only:** the `bistatic` module evaluates link
+  budgets for a given geometry. `Simulation` radars stay monostatic, so a
+  passive radar cannot yet be stepped, tracked or jammed there.
 
 - **2D radars report slant range:** a `Dimension::TwoD` radar measures the
   full 3D slant range but no elevation, so placing its plots in the

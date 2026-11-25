@@ -35,8 +35,8 @@ impl<const N: usize> Matrix<N, N> {
     /// The identity matrix.
     pub(crate) fn identity() -> Self {
         let mut m = Self::zeros();
-        for i in 0..N {
-            m.0[i][i] = 1.0;
+        for (i, row) in m.0.iter_mut().enumerate() {
+            row[i] = 1.0;
         }
         m
     }
