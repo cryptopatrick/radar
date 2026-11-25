@@ -15,6 +15,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   baseline, bistatic range, bistatic angle and bisector); and
   `PassiveReceiver`, which evaluates the bistatic radar range equation with
   coherent processing gain.
+- **Bistatic resolution and Doppler:** `range_resolution` (eq. (2) of the
+  paper, with bistatic and aspect angles), `velocity_resolution`, and
+  `BistaticGeometry` methods for both, plus the echo and direct-signal
+  Doppler shifts with a moving transmitter.
 
 ## [0.2.0] - 2026-11-20
 
