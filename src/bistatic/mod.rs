@@ -17,7 +17,9 @@
 //!
 //! [`BistaticGeometry`] also gives the bistatic range and velocity
 //! resolution and the Doppler shift of the echo, including the shift a
-//! moving satellite puts on a stationary target.
+//! moving satellite puts on a stationary target. [`DetectionThreshold`]
+//! turns an SNR into a detection, with the paper's fixed 16.5 dB threshold
+//! or a false-alarm-rate detector for fluctuating targets.
 //!
 //! ```
 //! use radar::bistatic::{BistaticGeometry, Illuminator, PassiveReceiver};
@@ -35,11 +37,13 @@
 //! ```
 
 mod budget;
+mod detection;
 mod geometry;
 mod illuminator;
 mod resolution;
 
 pub use budget::PassiveReceiver;
+pub use detection::{DetectionThreshold, PassiveDetection};
 pub use geometry::BistaticGeometry;
 pub use illuminator::Illuminator;
 pub use resolution::{range_resolution, velocity_resolution};
