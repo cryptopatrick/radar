@@ -36,6 +36,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   CPI and per second, Pfa for a target rate) and cell-averaging CFAR
   (`ca_cfar_multiplier`, `ca_cfar_pd`, `ca_cfar_loss_db`).
 
+## [0.2.5] - 2026-11-25
+
+### Added
+
+- **Bistatic (passive radar):** illuminators of opportunity, bistatic geometry
+  and the passive radar range equation.
+- **Bistatic resolution:** range, velocity and Doppler resolution.
+- **Bistatic detection:** passive detection with a fixed SNR or false-alarm
+  threshold.
+- **Bistatic coverage:** coverage and resolution maps, and surveillance antennas.
+- **Bistatic noise:** noise, direct-signal interference and false alarms.
+
 ## [0.2.0] - 2026-11-20
 
 A complete rewrite. `radar` is now a realistic radar and sensor simulation
@@ -88,6 +100,7 @@ releases were a placeholder ("radar data formats") with no usable API.
 
 - Placeholder release: minimal manifest and library.
 
+[0.2.5]: https://github.com/cryptopatrick/radar/compare/v0.2.0...v0.2.5
 [0.2.0]: https://github.com/cryptopatrick/radar/compare/0345e00...v0.2.0
 [0.1.1]: https://github.com/cryptopatrick/radar/commit/0345e00
 [0.1.0]: https://github.com/cryptopatrick/radar/commit/7ed73c0
